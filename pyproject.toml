@@ -1,0 +1,22 @@
+[project]
+name = "minidb"
+version = "0.1.0"
+description = "파일 기반 미니 DBMS (PostgreSQL 문법 부분집합 호환)"
+readme = "README.md"
+requires-python = ">=3.14"
+# 런타임 의존성 없음: free-threading 미지원 C 확장을 import하면
+# 3.14t에서 GIL이 다시 켜질 수 있으므로 표준 라이브러리만 사용한다.
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["minidb", "minidb.tools"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

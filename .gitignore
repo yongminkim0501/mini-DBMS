@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+# 벤치마크용 대용량 DB 파일 (결과 JSON은 results/에 커밋)
+bench_db/
+db/data/
+*.tbl
