@@ -14,6 +14,8 @@ from minidb import errors as E
         (E.UndefinedTable, "42P01"),
         (E.InvalidSchemaDefinition, "42P16"),
         (E.InvalidParameterValue, "22023"),
+        (E.SequenceGeneratorLimitExceeded, "2200H"),
+        (E.CharacterNotInRepertoire, "22021"),
     ],
 )
 def test_sqlstate_codes(cls, code):

@@ -5,12 +5,14 @@ import pytest
 
 from minidb.catalog import parse_schema
 from minidb.errors import (
+    CharacterNotInRepertoire,
     DataCorrupted,
     DatatypeMismatch,
     InvalidParameterValue,
     NotNullViolation,
     NumericValueOutOfRange,
     ProgramLimitExceeded,
+    SequenceGeneratorLimitExceeded,
 )
 from minidb.storage import BIGINT_MAX, BIGINT_MIN, FLAG_DELETED, HEADER_SIZE, MAGIC, TableFile
 
@@ -207,7 +209,7 @@ def test_scan_spans_multiple_chunks(tf):
         ((b"bytes", 1), DatatypeMismatch, "42804"),
         (("a", BIGINT_MAX + 1), NumericValueOutOfRange, "22003"),
         (("a", BIGINT_MIN - 1), NumericValueOutOfRange, "22003"),
-        (("\ud800", 1), InvalidParameterValue, "22023"),
+        (("\ud800", 1), CharacterNotInRepertoire, "22021"),
     ],
 )
 def test_validation_errors(tf, path, values, exc, code):
@@ -436,3 +438,15 @@ def test_flush_durable(tf, path):
     tf.append(("a", 1))
     tf.flush(durable=True)
     assert path.stat().st_size == tf.size
+
+
+def test_sequence_limit(tf, path):
+    tf._next_id = BIGINT_MAX  # 시퀀스 끝 직전으로 강제
+    rid, _ = tf.append(("last", 1))
+    assert rid == BIGINT_MAX
+    size = tf.size
+    with pytest.raises(SequenceGeneratorLimitExceeded) as ei:
+        tf.append(("overflow", 2))
+    assert ei.value.sqlstate == "2200H"
+    assert tf.size == size
+    assert tf.next_id == BIGINT_MAX + 1

@@ -22,12 +22,14 @@ from typing import Any, BinaryIO, Self
 
 from .catalog import BIGINT, TableSchema
 from .errors import (
+    CharacterNotInRepertoire,
     DataCorrupted,
     DatatypeMismatch,
     InvalidParameterValue,
     NotNullViolation,
     NumericValueOutOfRange,
     ProgramLimitExceeded,
+    SequenceGeneratorLimitExceeded,
 )
 
 __all__ = [
@@ -284,7 +286,7 @@ class TableFile:
                 try:
                     data = v.encode("utf-8")
                 except UnicodeEncodeError as exc:  # 짝 없는 서로게이트 등
-                    raise InvalidParameterValue(
+                    raise CharacterNotInRepertoire(
                         f"value for column \"{self._col_names[i]}\" is not valid UTF-8: {exc.reason}"
                     ) from None
                 # 길이 제한은 글자 수가 아니라 UTF-8 바이트 수 기준.
@@ -368,8 +370,8 @@ class TableFile:
         result: list[tuple[int, int]] = []
         for values in rows:
             if next_id > BIGINT_MAX:
-                raise NumericValueOutOfRange(
-                    f"id sequence for table \"{self.schema.name}\" reached maximum value"
+                raise SequenceGeneratorLimitExceeded(
+                    f"nextval: reached maximum value of sequence for table \"{self.schema.name}\" ({BIGINT_MAX})"
                 )
             rec = self._encode(values, next_id)  # 실패하면 여기서 예외 → 아무 상태도 안 바뀜
             encoded.append(rec)
