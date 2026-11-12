@@ -36,6 +36,14 @@ jobs:
           # uv 버전마다 내려받을 수 있는 파이썬 목록이 다르므로 uv 도 고정한다.
           version: "0.12.0"
 
+      - name: Install pinned Python (uv managed)
+        shell: bash
+        run: |
+          # uv 0.12.0 은 "3.14.6+gil" 요청에 대해 자동 다운로드를 하지 않으므로 먼저 명시적으로 설치한다.
+          # (+gil 은 설치 요청 표기에서 빼고 "3.14.6" 으로 설치하면 GIL 빌드가 설치된다)
+          spec="${{ matrix.python }}"
+          uv python install "${spec%+gil}"
+
       - name: Show interpreter
         shell: bash
         run: |

@@ -45,6 +45,8 @@ UV_PYTHON_PREFERENCE=only-managed uv run --python 3.14.6+gil pytest
 UV_PYTHON_PREFERENCE=only-managed uv run --python 3.14.6t    pytest
 ```
 
+- `uv python install` 을 먼저 해야 한다. uv 0.12.0 은 `--python 3.14.6+gil` 요청에 대해 자동 다운로드를 하지 않는다
+  (`No interpreter found for Python 3.14.6+gil in managed installations`). CI 도 같은 이유로 설치 단계를 따로 둔다.
 - `+gil` 을 꼭 붙인다. `--python 3.14.6` 처럼 빌드를 지정하지 않으면, 프로젝트 `.venv` 가 이미 free-threaded 로
   만들어져 있을 때 그 venv 를 그대로 재사용한다.
 - pytest 헤더의 `minidb: python 3.14.6, free-threaded build=..., GIL enabled=...` 로 어떤 빌드에서 돌았는지 확인한다.
