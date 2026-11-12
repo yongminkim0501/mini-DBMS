@@ -7,9 +7,9 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 
+from ..identifiers import fold_identifier, is_valid_unquoted_identifier
 from .tokens import RESERVED_KEYWORDS
 
 __all__ = [
@@ -29,7 +29,6 @@ __all__ = [
 #: 정규화된 비교 연산자
 COMPARISON_OPS: frozenset[str] = frozenset({"=", "<>", "<", "<=", ">", ">="})
 
-_PLAIN_IDENT_RE = re.compile(r"[a-z_][a-z0-9_$]*\Z")
 # 파서가 위치에 따라 "지원하지 않는 기능"으로 해석하는 단어들 (예: WHERE 뒤의 or/not).
 # 이런 이름의 식별자는 to_sql 에서 항상 인용해야 왕복이 깨지지 않는다.
 CONTEXTUAL_WORDS: frozenset[str] = frozenset(
@@ -43,8 +42,12 @@ _QUOTE_ALWAYS: frozenset[str] = frozenset(k.lower() for k in RESERVED_KEYWORDS) 
 
 
 def quote_ident(name: str) -> str:
-    """식별자를 SQL 로 쓴다. 비인용으로 같은 이름이 되지 않는 경우에만 큰따옴표로 감싼다."""
-    if _PLAIN_IDENT_RE.match(name) and name not in _QUOTE_ALWAYS:
+    """식별자를 SQL 로 쓴다. 비인용으로 같은 이름이 되지 않는 경우에만 큰따옴표로 감싼다.
+
+    비인용으로 써도 되는 조건: 비인용 식별자 형태이고, 접어도(ASCII 소문자화) 그대로이며, 키워드처럼
+    해석될 단어가 아닐 것. 예: ``이름`` → ``이름``, ``ÄΣ`` → ``ÄΣ``, ``Users`` → ``"Users"``.
+    """
+    if is_valid_unquoted_identifier(name) and fold_identifier(name) == name and name not in _QUOTE_ALWAYS:
         return name
     return '"' + name.replace('"', '""') + '"'
 

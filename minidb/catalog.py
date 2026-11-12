@@ -5,19 +5,20 @@
     <db_dir>/schema/<table>.json   # 스키마 정의 (이 모듈이 읽음)
     <db_dir>/data/<table>.tbl      # 테이블 데이터 파일 (storage.TableFile 이 사용)
 
-이름 규칙은 PostgreSQL 의 비인용 식별자를 따른다: 테이블/컬럼 이름은 소문자로,
-타입 이름은 대문자로 정규화한다.
+이름 규칙은 PostgreSQL 의 비인용 식별자를 따른다. 테이블/컬럼 이름은 :mod:`minidb.identifiers` 의
+``fold_identifier`` (ASCII A-Z 만 소문자로)로 정규화한다 — SQL 렉서와 **같은 함수**를 써야 스키마의
+이름을 SQL 로 찾을 수 있다. 타입 이름은 대문자로 정규화한다.
 """
 
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .errors import InvalidSchemaDefinition, UndefinedTable
+from .identifiers import MAX_IDENTIFIER_BYTES, fold_identifier, identifier_too_long, is_valid_unquoted_identifier
 
 __all__ = ["BIGINT", "TEXT", "SUPPORTED_TYPES", "Column", "TableSchema", "Catalog", "parse_schema"]
 
@@ -26,9 +27,6 @@ TEXT = "TEXT"
 #: 지원 타입 (불변 상수이므로 모듈 수준에 두어도 스레드 안전)
 SUPPORTED_TYPES: frozenset[str] = frozenset({BIGINT, TEXT})
 
-# 비인용 식별자: 문자/밑줄로 시작, 이후 문자/숫자/밑줄. PostgreSQL 기본 최대 63바이트.
-_IDENT_RE = re.compile(r"[a-z_][a-z0-9_]*\Z")
-_MAX_IDENT_BYTES = 63
 _COLUMN_KEYS = frozenset({"name", "type", "nullable", "auto_increment"})
 _TABLE_KEYS = frozenset({"table", "columns"})
 
@@ -88,14 +86,14 @@ def _fail(msg: str) -> InvalidSchemaDefinition:
 
 
 def _normalize_ident(raw: Any, what: str) -> str:
-    """식별자를 소문자로 정규화하고 형식을 검사한다."""
+    """스키마의 이름을 SQL 비인용 식별자와 같은 규칙으로 정규화하고 형식을 검사한다."""
     if not isinstance(raw, str) or not raw:
         raise _fail(f"{what} must be a non-empty string")
-    name = raw.lower()
-    if not _IDENT_RE.match(name):
+    if not is_valid_unquoted_identifier(raw):
         raise _fail(f"invalid {what} \"{raw}\"")
-    if len(name.encode("utf-8")) > _MAX_IDENT_BYTES:
-        raise _fail(f"{what} \"{raw}\" is too long (max {_MAX_IDENT_BYTES} bytes)")
+    name = fold_identifier(raw)  # 렉서와 같은 함수: ASCII A-Z 만 소문자로
+    if identifier_too_long(name):
+        raise _fail(f"{what} \"{raw}\" is too long (max {MAX_IDENTIFIER_BYTES} bytes)")
     return name
 
 
@@ -146,7 +144,7 @@ def parse_schema(data: Any, *, expected_name: str | None = None) -> TableSchema:
     if unknown:
         raise _fail(f"unknown key(s) in schema: {sorted(unknown)}")
     table = _normalize_ident(data.get("table"), "table name")
-    if expected_name is not None and table != expected_name.lower():
+    if expected_name is not None and table != expected_name:
         raise _fail(f"table name \"{table}\" does not match schema file name \"{expected_name}\"")
 
     raw_cols = data.get("columns")
@@ -195,26 +193,31 @@ class Catalog:
         return self.db_dir / "data"
 
     def schema_path(self, table_name: str) -> Path:
-        """테이블의 스키마 JSON 경로."""
-        return self.schema_dir / f"{table_name.lower()}.json"
+        """테이블의 스키마 JSON 경로 (``table_name`` 은 정규화된 이름)."""
+        return self.schema_dir / f"{table_name}.json"
 
     def data_path(self, table_name: str) -> Path:
-        """테이블의 데이터 파일 경로 (``<db_dir>/data/<table>.tbl``)."""
-        return self.data_dir / f"{table_name.lower()}.tbl"
+        """테이블의 데이터 파일 경로 (``<db_dir>/data/<table>.tbl``, ``table_name`` 은 정규화된 이름)."""
+        return self.data_dir / f"{table_name}.tbl"
 
     def get(self, table_name: str) -> TableSchema:
-        """테이블 스키마를 반환한다.
+        """**정규화된** 테이블 이름으로 스키마를 반환한다.
+
+        ``table_name`` 은 SQL 렉서가 만든 식별자 값을 그대로 넘긴다: 비인용 ``Users`` 는 렉서가 이미
+        ``users`` 로 접었고, 인용 ``"Users"`` 는 대소문자가 보존된 ``Users`` 다. 여기서 다시 접지 않으므로
+        PostgreSQL 과 같이 ``"Users"`` 는 ``users`` 테이블과 다른 이름이다.
+        스키마 파일 이름도 정규화된 이름이어야 한다 (예: ``users회원.json``).
 
         Raises:
-            UndefinedTable: 스키마 파일이 없을 때.
+            UndefinedTable: 해당 이름의 스키마 파일이 없을 때.
             InvalidSchemaDefinition: JSON 이 깨졌거나 규칙을 위반할 때.
         """
-        key = table_name.lower()
+        key = table_name
         cached = self._cache.get(key)
         if cached is not None:
             return cached
-        # 경로 조작 방지: 식별자 형식이 아니면 존재할 수 없는 테이블로 본다.
-        if not _IDENT_RE.match(key):
+        # 정규화된 비인용 식별자 형태가 아니면 카탈로그에 있을 수 없는 이름이다 (경로 조작 방지 겸).
+        if not is_valid_unquoted_identifier(key) or fold_identifier(key) != key:
             raise UndefinedTable(f"relation \"{table_name}\" does not exist")
         path = self.schema_path(key)
         try:

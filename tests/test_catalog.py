@@ -48,10 +48,42 @@ def test_normalization(tmp_path):
         ],
     }
     write_schema(tmp_path, "users", data)
-    schema = Catalog(tmp_path).get("USERS")
+    cat = Catalog(tmp_path)
+    schema = cat.get("users")  # get 은 정규화된 이름을 받는다 (SQL 렉서가 만든 식별자 값)
     assert schema.name == "users"
     assert schema.columns[0].name == "id"
     assert schema.columns[1] == Column("username", "TEXT", nullable=True, auto_increment=False)
+    # 인용 식별자 "USERS" 는 users 와 다른 이름 (PostgreSQL 과 동일). get 은 다시 접지 않는다.
+    with pytest.raises(UndefinedTable):
+        cat.get("USERS")
+
+
+def test_non_ascii_names_fold_only_ascii(tmp_path):
+    data = {
+        "table": "Users회원",
+        "columns": [
+            {"name": "id", "type": "BIGINT", "auto_increment": True},
+            {"name": "이름", "type": "TEXT"},
+            {"name": "ÄgeΣ", "type": "BIGINT"},
+            {"name": "a$1", "type": "BIGINT"},
+        ],
+    }
+    write_schema(tmp_path, "users회원", data)
+    schema = Catalog(tmp_path).get("users회원")
+    assert schema.name == "users회원"
+    # Ä, Σ 는 ASCII 가 아니므로 그대로 (str.lower() 였다면 äge σ 가 됨)
+    assert schema.column_names == ("id", "이름", "Äge" + "Σ", "a$1")
+
+
+@pytest.mark.parametrize("bad", ["a-b", "1abc", "a b", "$x", "x.y"])
+def test_invalid_identifier_forms(bad):
+    with pytest.raises(InvalidSchemaDefinition):
+        parse_schema(
+            {
+                "table": "t",
+                "columns": [{"name": "id", "type": "BIGINT", "auto_increment": True}, {"name": bad, "type": "TEXT"}],
+            }
+        )
 
 
 def test_nullable_default_true_and_false(tmp_path):

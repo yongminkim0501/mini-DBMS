@@ -45,7 +45,8 @@ while 루프가 되고, 선택 `[ RETURNING … ]` 은 "다음 토큰이 RETURNI
 | `5 < age` | `Condition('age', '>', 5)` | 뒤집을 때 연산자 방향도 반전 (`<`↔`>`, `<=`↔`>=`) |
 | `- 5` (MINUS, INTEGER) | `Literal(-5)` | 음수 리터럴로 합침. `-9223372036854775808` 도 표현 가능 |
 | `LIMIT ALL` | `limit=None` | LIMIT 없음과 동일 |
-| `Users`, `"Users"` | `users`, `Users` | 비인용은 소문자, 인용은 그대로 |
+| `Users`, `"Users"` | `users`, `Users` | 비인용은 ASCII 만 소문자로, 인용은 그대로 |
+| `Users회원`, `ÄΣ` | `users회원`, `ÄΣ` | 비 ASCII 문자는 대소문자 변환하지 않음 |
 
 조건 정규화 덕분에 Phase 2 의 실행기는 B+ 트리를 쓸 수 있는 `id = 상수` 조건을 찾을 때
 `cond.column == "id" and cond.op == "="` 한 가지 모양만 보면 된다.
@@ -61,12 +62,37 @@ while 루프가 되고, 선택 `[ RETURNING … ]` 은 "다음 토큰이 RETURNI
 | 줄 주석 | `--` 부터 줄 끝까지 |
 | 블록 주석 | `/* … */`, PostgreSQL 처럼 **중첩 지원**: `/* a /* b */ c */` 전체가 주석. 닫히지 않으면 `unterminated /* comment` |
 | 예약 키워드 | `SELECT FROM WHERE INSERT INTO VALUES RETURNING LIMIT ALL AND NULL DEFAULT` (대소문자 무시). 비인용으로 식별자 자리에 오면 구문 오류 |
-| 비인용 식별자 | `[A-Za-z_][A-Za-z0-9_$]*`, 소문자로 변환 |
+| 비인용 식별자 | 첫 글자: ASCII 영문자, `_`, 비 ASCII 문자(U+0080 이상). 이후: 여기에 ASCII 숫자와 `$` 추가. **ASCII A-Z 만** 소문자로 변환 (§2.1) |
 | 인용 식별자 | `"…"`, 대소문자 유지, `""` → `"`. 빈 식별자는 `zero-length delimited identifier`, 닫히지 않으면 `unterminated quoted identifier` |
 | 식별자 길이 | UTF-8 **63바이트** 초과면 `NameTooLong` (42622) |
 | 문자열 | `'…'`, `''` → `'`, 줄바꿈 포함 가능. 닫히지 않으면 `unterminated quoted string` |
 | 정수 | `[0-9]+` → 파이썬 `int` (범위 검사는 바인더) |
 | 기호 | `( ) , ; * . = <> != < <= > >= -` |
+
+### 2.1 식별자 정규화 (렉서와 카탈로그 공통)
+
+식별자 규칙은 `minidb/identifiers.py` **한곳에만** 정의되어 있고, SQL 렉서와 스키마 카탈로그(`catalog.py`)가
+같은 함수를 쓴다.
+
+- `is_valid_unquoted_identifier(name)`: 비인용 식별자 형태인가.
+  정규식 `[A-Za-z_\u0080-\U0010FFFF][A-Za-z0-9_$\u0080-\U0010FFFF]*`.
+- `fold_identifier(name)`: **ASCII A-Z 만** 소문자로 바꾸고 나머지 문자는 그대로 둔다. PostgreSQL 이 UTF-8 같은
+  멀티바이트 인코딩에서 하는 것과 같다. `str.lower()` 는 쓰지 않는다. `str.lower()` 는 `Ä→ä`, `Σ→σ`,
+  `İ→i̇`(결합 문자가 붙음)처럼 유니코드 전체를 바꿔 PostgreSQL 과 달라진다.
+
+예: `SELECT 이름, Age FROM Users회원` → 컬럼 `이름`, `age`, 테이블 `users회원`.
+
+**한곳에서 정의하는 이유**: 카탈로그는 스키마 JSON 의 `"table": "Users회원"` 을 정규화해 `users회원` 으로 저장하고,
+SQL 의 `FROM Users회원` 은 렉서가 정규화한다. 두 규칙이 조금이라도 다르면(예: 한쪽만 `str.lower()`) 같은 이름을
+서로 다르게 바꿔 "relation does not exist" 버그가 생긴다.
+
+`Catalog.get(name)` 은 **이미 정규화된 이름**(렉서가 만든 식별자 값)을 받고 다시 접지 않는다. 그래서 PostgreSQL 과
+같이 인용 식별자 `"Users회원"` 은 `users회원` 테이블과 다른 이름이고, `"users회원"` 처럼 정확히 인용하면 찾는다.
+스키마 파일 이름도 정규화된 이름이어야 한다(`db/schema/users회원.json`).
+
+유니코드 정규화(NFC/NFD)는 하지 않는다(PostgreSQL 도 하지 않음). 같은 글자라도 조합 방식이 다르면 다른 이름이다.
+
+### 2.2 토큰화 구현
 
 **구현**: 모든 규칙을 이름 있는 그룹의 alternation 으로 묶은 컴파일된 정규식 하나로, 현재 위치에서 `match` 한 뒤
 `m.lastgroup` 으로 분기한다. 정규식 엔진(C)이 토큰 종류를 한 번에 판별한다. 대안의 순서가 의미를 가진다.
@@ -128,7 +154,6 @@ StatementSource(text, start_offset, error=None, tokens=None)
 | 항목 | PostgreSQL | minidb | 이유 |
 |---|---|---|---|
 | 63바이트 초과 식별자 | 63바이트로 **잘라내고** NOTICE | `NameTooLong` (42622) **오류** | 잘린 이름이 다른 객체와 우연히 같아지는 조용한 오동작을 막는다. NOTICE 를 내는 채널(Phase 3 전)도 아직 없다 |
-| 비인용 식별자의 비 ASCII 문자 | `이름` 허용 | 구문 오류 (인용하면 허용) | 명세의 정규식을 따름. 한글 이름은 `"이름"` 으로 쓴다 |
 | `123abc` | PG 15+: `trailing junk after numeric literal` | 동일 | PG 15+ 동작을 따름 |
 | 인접 문자열 이어 붙이기 `'a'\n'b'` | `'ab'` | 구문 오류 | 부분집합 |
 | `SELECT 1` (FROM 없음) | 허용 | 구문 오류 | 문법이 FROM 을 요구 |

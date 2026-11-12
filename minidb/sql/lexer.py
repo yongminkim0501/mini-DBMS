@@ -15,12 +15,11 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 from ..errors import DatabaseError, FeatureNotSupported, NameTooLong, SqlSyntaxError
+from ..identifiers import MAX_IDENTIFIER_BYTES, UNQUOTED_IDENT_PATTERN, fold_identifier, identifier_too_long
 from .tokens import RESERVED_KEYWORDS, Token, TokenType
 
 __all__ = ["MAX_IDENTIFIER_BYTES", "StatementSource", "iter_tokens", "tokenize", "iter_statements", "split_statements"]
 
-#: 식별자 최대 길이 (UTF-8 바이트). PostgreSQL 의 NAMEDATALEN - 1.
-MAX_IDENTIFIER_BYTES = 63
 
 # 토큰 규칙. 순서가 중요하다: 앞의 대안이 먼저 시도된다.
 #  - 주석('--', '/*')은 기호 '-' 보다 앞에
@@ -33,7 +32,7 @@ _TOKEN_PATTERN = r"""
 | (?P<block_comment>/\*)
 | (?P<prefixed_string>(?:[eEbBxXnN]|[uU]&)')
 | (?P<unicode_ident>[uU]&")
-| (?P<ident>[A-Za-z_][A-Za-z0-9_$]*)
+| (?P<ident>@IDENT@)
 | (?P<qident>"[^"]*(?:""[^"]*)*"?)
 | (?P<string>'[^']*(?:''[^']*)*'?)
 | (?P<numeric>(?:[0-9]+\.[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+)
@@ -44,9 +43,11 @@ _TOKEN_PATTERN = r"""
 | (?P<op1>[(),;*.=<>\-])
 | (?P<other>.)
 """
-_TOKEN_RE = re.compile(_TOKEN_PATTERN, re.VERBOSE | re.DOTALL)
+# 비인용 식별자 규칙은 카탈로그와 공유하는 minidb.identifiers 에서 가져온다 (한곳에서 정의).
+# 비 ASCII 문자(U+0080 이상)도 식별자 글자이므로 "SELECT 이름 FROM 회원" 이 동작한다.
+_TOKEN_RE = re.compile(_TOKEN_PATTERN.replace("@IDENT@", UNQUOTED_IDENT_PATTERN), re.VERBOSE | re.DOTALL)
 # 숫자 바로 뒤에 식별자 문자가 붙은 경우 (예: 123abc). PostgreSQL 15+ 와 같이 오류로 처리.
-_TRAILING_JUNK_RE = re.compile(r"[A-Za-z_]")
+_TRAILING_JUNK_RE = re.compile(r"[A-Za-z_\u0080-\U0010FFFF]")
 # 블록 주석 안에서 다음 '/*' 또는 '*/' 를 찾는다.
 _COMMENT_DELIM_RE = re.compile(r"/\*|\*/")
 
@@ -71,7 +72,7 @@ _KEYWORDS: dict[str, str] = {k.lower(): k for k in RESERVED_KEYWORDS}
 
 
 def _check_ident_length(name: str, offset: int) -> None:
-    if len(name) > MAX_IDENTIFIER_BYTES // 4 and len(name.encode("utf-8")) > MAX_IDENTIFIER_BYTES:
+    if identifier_too_long(name):
         # PostgreSQL 은 잘라내고 NOTICE 를 내지만, minidb 는 조용한 이름 변경을 피하려고 오류로 처리한다.
         raise NameTooLong(
             f'identifier "{name}" is too long ({len(name.encode("utf-8"))} bytes, maximum is {MAX_IDENTIFIER_BYTES})',
@@ -104,7 +105,9 @@ def iter_tokens(text: str) -> Iterator[Token]:
 
         if kind == "ident":
             word = m.group()
-            low = word.lower()
+            # 비인용 식별자 정규화: ASCII A-Z 만 소문자로 (카탈로그와 같은 fold_identifier).
+            # 키워드는 모두 ASCII 라 접은 결과로 조회하면 대소문자 무시 비교가 된다.
+            low = fold_identifier(word)
             kw = keywords.get(low)
             if kw is not None:
                 yield Token(T.KEYWORD, kw, pos, end, line, pos - line_start + 1)

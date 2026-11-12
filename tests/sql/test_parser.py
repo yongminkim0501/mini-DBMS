@@ -75,6 +75,14 @@ VALID = {
     'SELECT "order", "Or" FROM "my table" WHERE "not" = 1': SelectStmt(
         ("order", "Or"), Q(None, "my table"), (cond("not", "=", 1),), None
     ),
+    # 비 ASCII 비인용 식별자 (ASCII 만 소문자로)
+    "SELECT 이름, Age FROM Users회원 WHERE 나이 > 20": SelectStmt(
+        ("이름", "age"), Q(None, "users회원"), (cond("나이", ">", 20),), None
+    ),
+    "INSERT INTO 회원 (이름, ÄΣ) VALUES ('홍길동', 1) RETURNING 이름": InsertStmt(
+        Q(None, "회원"), ("이름", "ÄΣ"), ((L("홍길동"), L(1)),), ("이름",)
+    ),
+    'SELECT "Users회원", "ÄΣ" FROM 공개.회원': SelectStmt(("Users회원", "ÄΣ"), Q("공개", "회원"), (), None),
     "SELECT a FROM t /* 주석 */ WHERE -- 줄 주석\n a = 1": SelectStmt(("a",), Q(None, "t"), (cond("a", "=", 1),), None),
 }
 
@@ -90,6 +98,13 @@ def test_roundtrip(sql):
     again = P(ast.to_sql())
     assert again == ast
     assert again.to_sql() == ast.to_sql()  # to_sql 은 정규형이라 고정점
+
+
+def test_to_sql_non_ascii_identifiers():
+    # 비인용으로 같은 이름이 되면 인용하지 않고, ASCII 대문자가 섞이면 인용한다
+    assert P("SELECT 이름 FROM 회원").to_sql() == "SELECT 이름 FROM 회원"
+    assert P("SELECT ÄΣ FROM t").to_sql() == "SELECT ÄΣ FROM t"
+    assert P('SELECT "Users회원" FROM t').to_sql() == 'SELECT "Users회원" FROM t'
 
 
 def test_to_sql_examples():

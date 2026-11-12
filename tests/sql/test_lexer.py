@@ -153,3 +153,32 @@ def test_identifier_length_boundary():
     lex_error('"' + "가" * 22 + '"', NameTooLong)  # 66바이트
     lex_error('"' + "A" * 64 + '"', NameTooLong)
     assert kinds('"' + "A" * 63 + '"') == [(T.IDENT, "A" * 63)]
+
+
+# ------------------------------------------------------------------ 비 ASCII 비인용 식별자
+
+
+def test_non_ascii_unquoted_identifiers():
+    assert kinds("SELECT 이름 FROM 회원") == [
+        (T.KEYWORD, "SELECT"), (T.IDENT, "이름"), (T.KEYWORD, "FROM"), (T.IDENT, "회원"),
+    ]  # fmt: skip
+    assert kinds("Users회원 회원1 _가$") == [(T.IDENT, "users회원"), (T.IDENT, "회원1"), (T.IDENT, "_가$")]
+
+
+def test_non_ascii_uppercase_not_folded():
+    assert kinds("Ä Σ ÄBC Straße") == [(T.IDENT, "Ä"), (T.IDENT, "Σ"), (T.IDENT, "Äbc"), (T.IDENT, "straße")]
+
+
+def test_non_ascii_identifier_length_boundary():
+    assert kinds("가" * 21) == [(T.IDENT, "가" * 21)]
+    lex_error("가" * 22, NameTooLong)
+
+
+def test_non_ascii_trailing_junk_after_number():
+    err = lex_error("SELECT 123가", SqlSyntaxError)
+    assert err.message == 'trailing junk after numeric literal at or near "123가"'
+
+
+def test_non_ascii_identifier_positions():
+    toks = tokenize("회원 이름")
+    assert [(t.value, t.offset, t.column) for t in toks[:-1]] == [("회원", 0, 1), ("이름", 3, 4)]
