@@ -25,7 +25,7 @@ from ..errors import (
     InvalidRowCountInLimitClause,
     SqlSyntaxError,
 )
-from .ast import Condition, Default, InsertStmt, Literal, QualifiedName, SelectStmt, Star, Statement
+from .ast import Condition, Default, ExplainStmt, InsertStmt, Literal, QualifiedName, SelectStmt, Star, Statement
 from .lexer import StatementSource, iter_statements, tokenize
 from .tokens import Token, TokenType
 
@@ -37,8 +37,8 @@ T = TokenType
 _UNSUPPORTED_STATEMENTS: frozenset[str] = frozenset(
     {
         "update", "delete", "create", "drop", "alter", "truncate", "begin", "commit", "rollback",
-        "start", "end", "savepoint", "release", "abort", "with", "explain", "copy", "grant", "revoke",
-        "set", "show", "reset", "vacuum", "analyze", "prepare", "execute", "deallocate", "lock",
+        "start", "end", "savepoint", "release", "abort", "with", "copy", "grant", "revoke",
+        "set", "show", "reset", "vacuum", "prepare", "execute", "deallocate", "lock",
         "merge", "table", "do", "call", "listen", "notify", "discard", "comment", "cluster", "reindex",
     }
 )  # fmt: skip
@@ -146,8 +146,25 @@ class _Parser:
         return stmt
 
     def _statement(self) -> Statement:
-        """statement := insert | select"""
+        """statement := [ EXPLAIN [ ANALYZE ] ] ( insert | select )"""
         tok = self._peek()
+        if self._is_keyword(tok, "EXPLAIN"):
+            self._advance()
+            analyze = False
+            nxt = self._peek()
+            if nxt.type is T.LPAREN:
+                raise self._unsupported("EXPLAIN options in parentheses are not supported", nxt)
+            if self._is_keyword(nxt, "ANALYZE"):
+                self._advance()
+                analyze = True
+            inner = self._peek()
+            if self._is_keyword(inner, "INSERT"):
+                stmt: InsertStmt | SelectStmt = self._insert()
+            elif self._is_keyword(inner, "SELECT"):
+                stmt = self._select()
+            else:
+                raise self._error(inner)
+            return ExplainStmt(stmt, analyze, position=self._pos(tok))
         if self._is_keyword(tok, "INSERT"):
             return self._insert()
         if self._is_keyword(tok, "SELECT"):
@@ -316,20 +333,29 @@ class _Parser:
         if tok.type is T.IDENT:
             col = self._advance()
             self._reject_unsupported_predicate()
+            op_tok = self._peek()
             op = self._op()
             nxt = self._peek()
             if nxt.type is T.IDENT:
                 raise self._unsupported("comparison between two columns is not supported", nxt)
             value = self._literal()
-            return Condition(col.value, op, value, position=self._pos(col))
+            return Condition(col.value, op, value, position=self._pos(col), op_position=self._pos(op_tok))
 
         if tok.type in _LITERAL_START or self._is_keyword(tok, "NULL"):
             value = self._literal()
+            op_tok = self._peek()
             op = self._op()
             col = self._ident()
             # 리터럴이 왼쪽이면 컬럼을 왼쪽으로 옮기고 연산자 방향도 바꾼다.
             # Phase 2 에서 "id = 상수" 인덱스 탐색 조건을 찾을 때 한 가지 모양만 보면 된다.
-            return Condition(col.value, _FLIP_OP[op], value, position=self._pos(col))
+            return Condition(
+                col.value,
+                _FLIP_OP[op],
+                value,
+                position=self._pos(col),
+                op_position=self._pos(op_tok),
+                literal_first=True,
+            )
 
         raise self._error(tok)
 

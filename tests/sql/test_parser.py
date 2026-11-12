@@ -288,3 +288,53 @@ def test_parser_instances_are_independent():
     # 같은 문장을 여러 번 파싱해도 결과가 같다 (공유 상태 없음)
     sql = "SELECT * FROM t WHERE 1 = a"
     assert P(sql) == P(sql) == P(split_statements(sql)[0])
+
+
+# ------------------------------------------------------------------ EXPLAIN
+
+from minidb.sql.ast import ExplainStmt  # noqa: E402
+
+
+def test_explain():
+    e = P("explain SELECT * FROM t WHERE 5 < a LIMIT 3")
+    assert e == ExplainStmt(SelectStmt(Star(), Q(None, "t"), (cond("a", ">", 5),), 3), False)
+    assert e.position == 1
+    assert e.to_sql() == "EXPLAIN SELECT * FROM t WHERE a > 5 LIMIT 3"
+    a = P("EXPLAIN ANALYZE INSERT INTO t (v) VALUES (1)")
+    assert a == ExplainStmt(InsertStmt(Q(None, "t"), ("v",), ((L(1),),), None), True)
+    assert a.to_sql() == "EXPLAIN ANALYZE INSERT INTO t (v) VALUES (1)"
+    for ast in (e, a):
+        assert P(ast.to_sql()) == ast
+
+
+@pytest.mark.parametrize(
+    "sql, exc, message",
+    [
+        ("EXPLAIN", SqlSyntaxError, "syntax error at end of input"),
+        ("EXPLAIN EXPLAIN SELECT * FROM t", SqlSyntaxError, 'syntax error at or near "EXPLAIN"'),
+        ("EXPLAIN ANALYZE", SqlSyntaxError, "syntax error at end of input"),
+        ("EXPLAIN UPDATE t SET a = 1", SqlSyntaxError, 'syntax error at or near "UPDATE"'),
+        ("EXPLAIN (ANALYZE) SELECT * FROM t", FeatureNotSupported, "EXPLAIN options in parentheses are not supported"),
+        ("SELECT explain FROM t", SqlSyntaxError, 'syntax error at or near "explain"'),
+        ("ANALYZE t", SqlSyntaxError, 'syntax error at or near "ANALYZE"'),
+    ],
+)
+def test_explain_errors(sql, exc, message):
+    with pytest.raises(exc) as ei:
+        P(sql)
+    assert ei.value.message == message
+
+
+def test_quoted_explain_is_identifier():
+    s = P('SELECT "explain", "analyze" FROM t')
+    assert s.columns == ("explain", "analyze")
+    assert s.to_sql() == 'SELECT "explain", "analyze" FROM t'
+
+
+def test_condition_operator_position_and_written_order():
+    sql = "SELECT * FROM t WHERE name = 1 AND 5 < age"
+    s = P(sql)
+    c1, c2 = s.where
+    assert c1.op_position == sql.index("=") + 1 and not c1.literal_first and c1.written_op == "="
+    assert c2.op_position == sql.index("<") + 1 and c2.literal_first
+    assert (c2.op, c2.written_op) == (">", "<")

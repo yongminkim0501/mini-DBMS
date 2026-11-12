@@ -20,6 +20,7 @@ __all__ = [
     "Condition",
     "InsertStmt",
     "SelectStmt",
+    "ExplainStmt",
     "Statement",
     "COMPARISON_OPS",
     "quote_ident",
@@ -114,21 +115,33 @@ class Condition:
     """``column op literal`` 비교 하나. 항상 컬럼이 왼쪽이 되도록 정규화되어 있다.
 
     ``position`` 은 컬럼 식별자의 위치 (바인더의 "column does not exist" 오류용).
-    리터럴의 위치는 ``value.position``.
+    리터럴의 위치는 ``value.position``, 연산자의 위치는 ``op_position``
+    (바인더의 "operator does not exist" 오류는 PostgreSQL 처럼 연산자를 가리킨다).
+    ``literal_first`` 는 원문이 ``5 < age`` 처럼 리터럴이 왼쪽이었는지 (오류 메시지를 원문 순서로 쓰기 위함).
     """
 
     column: str
     op: str
     value: Literal
     position: int = field(default=0, compare=False, kw_only=True)
+    op_position: int = field(default=0, compare=False, kw_only=True)
+    literal_first: bool = field(default=False, compare=False, kw_only=True)
 
     def __post_init__(self) -> None:
         if self.op not in COMPARISON_OPS:
             raise ValueError(f"invalid comparison operator {self.op!r}")
 
+    @property
+    def written_op(self) -> str:
+        """원문에 쓰인 방향의 연산자 (``5 < age`` 는 정규화 후 op 가 ``>`` 지만 written_op 는 ``<``)."""
+        return _FLIP[self.op] if self.literal_first else self.op
+
     def to_sql(self) -> str:
         """SQL 표현."""
         return f"{quote_ident(self.column)} {self.op} {self.value.to_sql()}"
+
+
+_FLIP: dict[str, str] = {"=": "=", "<>": "<>", "<": ">", "<=": ">=", ">": "<", ">=": "<="}
 
 
 def _ident_list(names: tuple[str, ...]) -> str:
@@ -200,5 +213,18 @@ class SelectStmt:
         return sql
 
 
+@dataclass(frozen=True, slots=True)
+class ExplainStmt:
+    """``EXPLAIN [ANALYZE] statement``. ANALYZE 면 실제로 실행한다 (INSERT 도 실제로 삽입, PostgreSQL 과 동일)."""
+
+    statement: InsertStmt | SelectStmt
+    analyze: bool
+    position: int = field(default=0, compare=False, kw_only=True)
+
+    def to_sql(self) -> str:
+        """정규화된 SQL 문자열."""
+        return ("EXPLAIN ANALYZE " if self.analyze else "EXPLAIN ") + self.statement.to_sql()
+
+
 #: 파서가 반환하는 문장 노드
-type Statement = InsertStmt | SelectStmt
+type Statement = InsertStmt | SelectStmt | ExplainStmt

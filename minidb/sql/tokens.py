@@ -33,7 +33,10 @@ class TokenType(Enum):
 
 #: 예약 키워드. 인용 부호 없이 식별자 자리에 오면 구문 오류.
 RESERVED_KEYWORDS: frozenset[str] = frozenset(
-    {"SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "RETURNING", "LIMIT", "ALL", "AND", "NULL", "DEFAULT"}
+    {
+        "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "RETURNING", "LIMIT", "ALL", "AND", "NULL", "DEFAULT",
+        "EXPLAIN", "ANALYZE",
+    }  # fmt: skip
 )
 
 
