@@ -1,4 +1,7 @@
 # mini-DBMS
+
+[![test](https://github.com/yongminkim0501/mini-DBMS/actions/workflows/test.yml/badge.svg)](https://github.com/yongminkim0501/mini-DBMS/actions/workflows/test.yml)
+
 Krafton Jungle Week 12 DBMS 구현
 
 파이썬(표준 라이브러리만)으로 만드는 파일 기반 미니 DBMS. PostgreSQL 문법 부분집합 / SQLSTATE 호환을 목표로 한다.
