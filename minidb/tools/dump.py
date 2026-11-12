@@ -4,20 +4,22 @@
 
     python -m minidb.tools.dump <table> --db <db_dir> [--limit N]
 
-파일을 수정하지 않도록 :class:`~minidb.storage.TableFile` 을 readonly 로 연다
-(손상된 꼬리가 있어도 truncate 하지 않고 경고만 출력한다).
+파일을 절대 수정하지 않는다. 레코드 목록은 :func:`~minidb.storage.inspect_records` 로
+CRC 를 하나씩 검사하며 출력하므로(OK/BAD), 파일이 손상되어 TableFile 로 열 수 없는 경우에도
+손상 위치 직전까지의 레코드와 손상 지점을 보여준다.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+import warnings
 from collections.abc import Sequence
 from typing import Any, TextIO
 
 from ..catalog import Catalog
 from ..errors import DatabaseError
-from ..storage import FLAG_DELETED, TableFile, read_header
+from ..storage import FLAG_DELETED, RecordCheck, TableFile, inspect_records, read_header
 
 __all__ = ["dump", "format_value", "main"]
 
@@ -31,45 +33,80 @@ def format_value(v: Any) -> str:
     return str(v)
 
 
-def _flags_str(flags: int) -> str:
+def _flags_str(flags: int | None) -> str:
+    if flags is None:
+        return "?"
     names = ["deleted"] if flags & FLAG_DELETED else []
     return f"0x{flags:02x}" + (f" ({','.join(names)})" if names else "")
 
 
+def _crc_str(c: RecordCheck) -> str:
+    """CRC 검증 결과: 둘 다 맞으면 OK, 아니면 어느 쪽이 깨졌는지 BAD(...)."""
+    if c.header_ok and c.body_ok:
+        return "OK"
+    if c.length is None:
+        return "-"
+    if not c.header_ok:
+        return "BAD(header)"
+    if c.body_ok is False:
+        return "BAD(body)"
+    return "OK"  # CRC 는 맞지만 다른 구조 문제 (error 에 표시)
+
+
 def dump(table: str, db_dir: str, *, limit: int | None = None, out: TextIO = sys.stdout) -> int:
-    """``table`` 의 헤더와 레코드를 ``out`` 에 출력하고 레코드 수를 반환한다."""
+    """``table`` 의 헤더와 레코드를 ``out`` 에 출력하고 검사한 레코드 위치 수를 반환한다."""
     catalog = Catalog(db_dir)
     schema = catalog.get(table)
     path = catalog.data_path(schema.name)
+    if not path.exists():
+        raise FileNotFoundError(f"table file not found: {path}")
 
-    with TableFile(path, schema, readonly=True) as tf:
-        with open(path, "rb") as f:
-            magic, version, column_count = read_header(f)
-        # 레코드 수는 헤더에 없으므로 한 번 훑어서 센다 (출력과 같은 순회에서 세면
-        # --limit 으로 출력을 줄여도 정확한 수를 헤더 요약에 보여줄 수 없다).
-        total = deleted = 0
-        for _, flags, _ in tf.records():
-            total += 1
-            deleted += bool(flags & FLAG_DELETED)
+    with open(path, "rb") as f:
+        magic, version, column_count = read_header(f)
+    file_size = path.stat().st_size
 
-        print(f"table          : {schema.name}", file=out)
-        print(f"file           : {path}", file=out)
-        print(f"magic          : {magic!r}", file=out)
-        print(f"format_version : {version}", file=out)
-        print(f"column_count   : {column_count}  ({', '.join(f'{c.name} {c.type}' for c in schema.columns)})", file=out)
-        print(f"file_size      : {tf.size} bytes", file=out)
-        print(f"records        : {total}  (live {total - deleted}, deleted {deleted})", file=out)
-        print(f"next_id        : {tf.next_id}", file=out)
-        print("-" * 60, file=out)
-        print(f"{'offset':>12}  {'flags':<14}  row ({', '.join(schema.column_names)})", file=out)
+    # TableFile(readonly) 로 열어 next_id/논리적 끝을 얻는다. 손상이면 그 사실만 표시하고 계속.
+    open_status = "ok"
+    next_id: int | str = "?"
+    logical_end: int | str = "?"
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        try:
+            with TableFile(path, schema, readonly=True) as tf:
+                next_id, logical_end = tf.next_id, tf.size
+        except DatabaseError as exc:
+            open_status = f"FAILED: {exc}"
+    if caught and open_status == "ok":
+        open_status = f"warning: {caught[0].message}"
 
-        for n, (offset, flags, row) in enumerate(tf.records()):
-            if limit is not None and n >= limit:
-                print(f"... ({total - limit} more)", file=out)
-                break
-            values = ", ".join(format_value(v) for v in row)
-            print(f"{offset:>12}  {_flags_str(flags):<14}  ({values})", file=out)
-    return total
+    checks = list(inspect_records(path, schema))
+    good = sum(1 for c in checks if c.error is None)
+    deleted = sum(1 for c in checks if c.error is None and c.flags is not None and c.flags & FLAG_DELETED)
+    bad = len(checks) - good
+
+    print(f"table          : {schema.name}", file=out)
+    print(f"file           : {path}", file=out)
+    print(f"magic          : {magic!r}", file=out)
+    print(f"format_version : {version}", file=out)
+    cols = ", ".join(f"{c.name} {c.type}" for c in schema.columns)
+    print(f"column_count   : {column_count}  ({cols})", file=out)
+    print(f"file_size      : {file_size} bytes (logical end {logical_end})", file=out)
+    print(f"records        : {good}  (live {good - deleted}, deleted {deleted}, bad {bad})", file=out)
+    print(f"next_id        : {next_id}", file=out)
+    print(f"open           : {open_status}", file=out)
+    print("-" * 72, file=out)
+    print(f"{'offset':>12}  {'crc':<11}  {'flags':<14}  row ({', '.join(schema.column_names)})", file=out)
+
+    for n, c in enumerate(checks):
+        if limit is not None and n >= limit:
+            print(f"... ({len(checks) - limit} more)", file=out)
+            break
+        if c.row is not None:
+            body = "(" + ", ".join(format_value(v) for v in c.row) + ")"
+        else:
+            body = f"<{c.error}>"
+        print(f"{c.offset:>12}  {_crc_str(c):<11}  {_flags_str(c.flags):<14}  {body}", file=out)
+    return len(checks)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

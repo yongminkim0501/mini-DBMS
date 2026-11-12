@@ -1,8 +1,10 @@
 import io
 import shutil
+import struct
 from pathlib import Path
 
 from minidb.catalog import Catalog
+from minidb.storage import RECORD_HEADER_SIZE as RH
 from minidb.storage import TableFile
 from minidb.tools.dump import dump, main
 
@@ -30,7 +32,8 @@ def test_dump_output(tmp_path):
     assert "next_id        : 4" in text
     assert "(2, NULL, NULL)" in text
     assert "(3, '홍길동', 7)" in text
-    assert "          16  0x00" in text
+    assert "          16  OK           0x00" in text
+    assert "open           : ok" in text
 
 
 def test_dump_limit(tmp_path):
@@ -57,3 +60,23 @@ def test_dump_does_not_modify_file(tmp_path):
         warnings.simplefilter("ignore")
         dump("users", str(db), out=io.StringIO())
     assert p.read_bytes() == before
+    assert sorted(x.name for x in p.parent.iterdir()) == ["users.tbl"]  # quarantine 파일도 만들지 않음
+
+
+def test_dump_shows_bad_crc(tmp_path):
+    db = make_db(tmp_path)
+    p = Catalog(db).data_path("users")
+    raw = bytearray(p.read_bytes())
+    # 두 번째 레코드(offset = 16 + 첫 레코드 크기)의 본문 마지막 바이트 반전
+    (len1,) = struct.unpack_from("<I", raw, 16)
+    off2 = 16 + RH + len1
+    (len2,) = struct.unpack_from("<I", raw, off2)
+    raw[off2 + RH + len2 - 1] ^= 0xFF
+    p.write_bytes(bytes(raw))
+    out = io.StringIO()
+    assert dump("users", str(db), out=out) == 3
+    text = out.getvalue()
+    assert "open           : FAILED" in text and "XX001" in text
+    assert f"{off2:>12}  BAD(body)" in text
+    assert "(3, '홍길동', 7)" in text  # body 만 깨졌으므로 뒤 레코드는 계속 보여준다
+    assert "bad 1" in text
