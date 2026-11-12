@@ -20,6 +20,12 @@ from minidb import errors as E
         (E.FeatureNotSupported, "0A000"),
         (E.NameTooLong, "42622"),
         (E.InvalidRowCountInLimitClause, "2201W"),
+        (E.InvalidSchemaName, "3F000"),
+        (E.UndefinedColumn, "42703"),
+        (E.DuplicateColumn, "42701"),
+        (E.GeneratedAlways, "428C9"),
+        (E.UndefinedFunction, "42883"),
+        (E.InvalidTextRepresentation, "22P02"),
     ],
 )
 def test_sqlstate_codes(cls, code):
@@ -36,3 +42,9 @@ def test_position_optional():
     assert err.position == 7
     assert str(err) == "ERROR:  bad (SQLSTATE 42601)"
     assert not issubclass(E.SqlSyntaxError, SyntaxError)
+
+
+def test_detail_hint_optional():
+    e = E.GeneratedAlways("m", detail="d", hint="h")
+    assert (e.detail, e.hint) == ("d", "h")
+    assert E.DatabaseError("x").detail is None and E.DatabaseError("x").hint is None

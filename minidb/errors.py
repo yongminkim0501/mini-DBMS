@@ -24,6 +24,12 @@ __all__ = [
     "FeatureNotSupported",
     "NameTooLong",
     "InvalidRowCountInLimitClause",
+    "InvalidSchemaName",
+    "UndefinedColumn",
+    "DuplicateColumn",
+    "GeneratedAlways",
+    "UndefinedFunction",
+    "InvalidTextRepresentation",
 ]
 
 
@@ -35,17 +41,29 @@ class DatabaseError(Exception):
         message: 사람이 읽을 수 있는 오류 메시지.
         position: SQL 원문 기준 1부터 시작하는 문자 위치 (PostgreSQL ErrorResponse 의 P 필드).
             SQL 텍스트와 관계없는 오류(저장 계층 등)는 None.
+        detail: 부가 설명 (ErrorResponse 의 D 필드). psql 은 "DETAIL:  ..." 로 출력한다.
+        hint: 해결 힌트 (ErrorResponse 의 H 필드). psql 은 "HINT:  ..." 로 출력한다.
     """
 
     #: 하위 클래스가 덮어쓰는 기본 SQLSTATE (XX000 = internal_error)
     default_sqlstate: str = "XX000"
 
-    def __init__(self, message: str, *, sqlstate: str | None = None, position: int | None = None) -> None:
-        """메시지와 (선택적으로) SQLSTATE, SQL 원문 위치를 지정해 예외를 만든다."""
+    def __init__(
+        self,
+        message: str,
+        *,
+        sqlstate: str | None = None,
+        position: int | None = None,
+        detail: str | None = None,
+        hint: str | None = None,
+    ) -> None:
+        """메시지와 (선택적으로) SQLSTATE, SQL 원문 위치, DETAIL, HINT 를 지정해 예외를 만든다."""
         super().__init__(message)
         self.message: str = message
         self.sqlstate: str = sqlstate if sqlstate is not None else self.default_sqlstate
         self.position: int | None = position
+        self.detail: str | None = detail
+        self.hint: str | None = hint
 
     def __str__(self) -> str:
         return f"ERROR:  {self.message} (SQLSTATE {self.sqlstate})"
@@ -133,3 +151,39 @@ class InvalidRowCountInLimitClause(DatabaseError):
     """LIMIT 에 음수 (2201W)."""
 
     default_sqlstate = "2201W"
+
+
+class InvalidSchemaName(DatabaseError):
+    """존재하지 않는 스키마 (3F000)."""
+
+    default_sqlstate = "3F000"
+
+
+class UndefinedColumn(DatabaseError):
+    """존재하지 않는 컬럼 (42703)."""
+
+    default_sqlstate = "42703"
+
+
+class DuplicateColumn(DatabaseError):
+    """INSERT 컬럼 목록에 같은 컬럼이 두 번 (42701)."""
+
+    default_sqlstate = "42701"
+
+
+class GeneratedAlways(DatabaseError):
+    """GENERATED ALWAYS 컬럼(id)에 DEFAULT 가 아닌 값 (428C9)."""
+
+    default_sqlstate = "428C9"
+
+
+class UndefinedFunction(DatabaseError):
+    """함수/연산자가 없음 (42883). PostgreSQL 은 "operator does not exist" 도 이 코드다."""
+
+    default_sqlstate = "42883"
+
+
+class InvalidTextRepresentation(DatabaseError):
+    """문자열을 해당 타입으로 해석할 수 없음 (22P02)."""
+
+    default_sqlstate = "22P02"

@@ -36,23 +36,39 @@ def display_width(s: str) -> int:
     return sum(_char_width(ch) for ch in s)
 
 
-def format_error(sql: str, err: DatabaseError) -> str:
+def format_error(sql: str, err: DatabaseError, *, position_offset: int = 0, line_offset: int = 0) -> str:
     """``err`` 를 psql 과 같은 형식의 여러 줄 문자열로 만든다.
 
-    ``err.position`` 이 없으면 ``ERROR:  메시지`` 한 줄만 반환한다.
+    출력 순서는 libpq 와 같다: ``ERROR:`` → (position 이 있으면) ``LINE n:`` 과 캐럿 → ``DETAIL:`` → ``HINT:``.
+    ``err.position`` 이 없으면 LINE/캐럿 없이 메시지(와 DETAIL/HINT)만 출력한다.
     여러 줄 SQL 이면 position 이 속한 줄 번호와 그 줄만 보여준다.
+
+    Args:
+        sql: 위치 계산에 쓸 SQL 텍스트. 스크립트 전체를 메모리에 두지 않는 경우(CLI 스트리밍)에는
+            오류 문장이 있는 부분만 넘기고 아래 두 오프셋으로 보정한다.
+        position_offset: ``sql[0]`` 의 원문 기준 위치(0부터). ``err.position - position_offset`` 이 ``sql`` 안 위치.
+        line_offset: ``sql`` 첫 줄 앞에 있는 줄 수. ``LINE`` 번호에 더해진다.
     """
-    head = f"ERROR:  {err.message}"
-    if err.position is None:
-        return head
+    lines = [f"ERROR:  {err.message}"]
+    if err.position is not None:
+        lines.append(_position_lines(sql, err.position - position_offset, line_offset))
+    if err.detail:
+        lines.append(f"DETAIL:  {err.detail}")
+    if err.hint:
+        lines.append(f"HINT:  {err.hint}")
+    return "\n".join(lines)
+
+
+def _position_lines(sql: str, position: int, line_offset: int) -> str:
+    """``LINE n: ...`` 줄과 캐럿 줄."""
 
     # position(1부터) → 0부터의 문자 인덱스. 'end of input' 은 len(sql)+1 일 수 있으므로 끝으로 자른다.
-    idx = min(max(err.position - 1, 0), len(sql))
+    idx = min(max(position - 1, 0), len(sql))
     line_start = sql.rfind("\n", 0, idx) + 1
     line_end = sql.find("\n", idx)
     if line_end == -1:
         line_end = len(sql)
-    line_no = sql.count("\n", 0, idx) + 1
+    line_no = line_offset + sql.count("\n", 0, idx) + 1
     line = sql[line_start:line_end].rstrip("\r").replace("\t", " ")
     col = min(idx - line_start, len(line))  # 줄 안에서 캐럿이 가리키는 문자 인덱스
 
@@ -88,4 +104,4 @@ def format_error(sql: str, err: DatabaseError) -> str:
     label = f"LINE {line_no}: "
     # 캐럿 칸 = 라벨 폭 + 앞 생략 기호 폭 + (보이는 구간 시작 ~ 캐럿) 표시 폭
     pad = display_width(label) + len(prefix) + sum(widths[start:col])
-    return f"{head}\n{label}{prefix}{shown}{suffix}\n{' ' * pad}^"
+    return f"{label}{prefix}{shown}{suffix}\n{' ' * pad}^"
