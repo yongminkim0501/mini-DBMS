@@ -26,13 +26,34 @@ docs/storage-format.md    파일 포맷과 설계 이유
 docs/sql-grammar.md       지원 SQL 문법(BNF), 렉싱 규칙, PostgreSQL 과의 차이
 ```
 
+## 개발 환경
+
+CI 와 **같은 파이썬 패치 버전**을 쓴다. 패치 버전이 다르면 GC·free-threading 동작과 벤치마크 수치가 달라질 수 있다.
+
+| 항목 | 버전 |
+|---|---|
+| CPython (GIL 빌드) | `3.14.6+gil` |
+| CPython (free-threaded 빌드) | `3.14.6t` |
+| uv | `0.12.0` (uv 버전마다 내려받을 수 있는 파이썬 목록이 다르다) |
+
+```sh
+# uv 가 관리하는 동일 버전 설치 (시스템/Homebrew 파이썬이 아니라 uv 관리 빌드를 쓴다)
+uv python install 3.14.6 3.14.6t
+
+# 테스트: 두 빌드에서 각각
+UV_PYTHON_PREFERENCE=only-managed uv run --python 3.14.6+gil pytest
+UV_PYTHON_PREFERENCE=only-managed uv run --python 3.14.6t    pytest
+```
+
+- `+gil` 을 꼭 붙인다. `--python 3.14.6` 처럼 빌드를 지정하지 않으면, 프로젝트 `.venv` 가 이미 free-threaded 로
+  만들어져 있을 때 그 venv 를 그대로 재사용한다.
+- pytest 헤더의 `minidb: python 3.14.6, free-threaded build=..., GIL enabled=...` 로 어떤 빌드에서 돌았는지 확인한다.
+- 버전을 올릴 때는 `.github/workflows/test.yml` 의 `PYTHON_PATCH`·매트릭스·uv 버전과 이 표를 함께 바꾼다.
+
 ## 실행
 
 ```sh
-uv python install 3.14 3.14t
-uv run --python 3.14+gil pytest      # GIL 빌드 (주의: "3.14" 는 3.14t venv 를 재사용할 수 있음)
-uv run --python 3.14t    pytest      # free-threaded 빌드
-
-python -m minidb.tools.dump users --db ./db
-uv run --python 3.14t python scripts/bench_storage.py --rows 1000000 --db ./bench_db --seed 42 --out results/storage_3.14t.json
+uv run --python 3.14.6t python -m minidb.tools.dump users --db ./db
+uv run --python 3.14.6t python scripts/bench_storage.py --rows 1000000 --db ./bench_db --seed 42 --out results/storage_3.14t.json
+uv run --python 3.14.6t python scripts/bench_parser.py --out results/parser_3.14t.json
 ```
