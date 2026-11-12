@@ -1,0 +1,8 @@
+{
+  "oid": 16385,
+  "table": "Users",
+  "columns": [
+    {"name": "id",  "type": "BIGINT", "auto_increment": true},
+    {"name": "tag", "type": "TEXT",   "nullable": false}
+  ]
+}

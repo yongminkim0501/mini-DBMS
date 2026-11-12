@@ -1,0 +1,29 @@
+INSERT 0 1
+INSERT 0 1
+ id | name | age 
+----+------+-----
+  1 | kim  |  25
+  2 | lee  |  31
+(2 rows)
+
+ name 
+------
+ kim
+ lee
+(2 rows)
+
+ age | name | age 
+-----+------+-----
+  25 | kim  |  25
+(1 row)
+
+ id | name | age 
+----+------+-----
+(0 rows)
+
+ id | name | age 
+----+------+-----
+  2 | lee  |  31
+(1 row)
+
+[exit 0]

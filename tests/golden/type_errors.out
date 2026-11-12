@@ -1,0 +1,72 @@
+INSERT 0 1
+INSERT 0 1
+ id |  name  | age 
+----+--------+-----
+  1 | 25     |  30
+  2 | spaces |   7
+(2 rows)
+
+ERROR:  invalid input syntax for type bigint: "abc"
+LINE 6: INSERT INTO users (name, age) VALUES ('bad', 'abc');
+                                                     ^
+ERROR:  bigint out of range
+LINE 7: INSERT INTO users (name, age) VALUES ('big', 922337203685477...
+                                                     ^
+ERROR:  value "99999999999999999999" is out of range for type bigint
+LINE 8: INSERT INTO users (name, age) VALUES ('bigtext', '9999999999...
+                                                         ^
+ERROR:  cannot insert a non-DEFAULT value into column "id"
+LINE 9: INSERT INTO users VALUES ('kim', 25);
+                                  ^
+DETAIL:  Column "id" is an identity column defined as GENERATED ALWAYS.
+ERROR:  cannot insert a non-DEFAULT value into column "id"
+LINE 10: INSERT INTO users (id, name) VALUES (1, 'x');
+                                              ^
+DETAIL:  Column "id" is an identity column defined as GENERATED ALWAYS.
+ERROR:  INSERT has more expressions than target columns
+LINE 11: INSERT INTO users VALUES (DEFAULT, 'a', 1, 2);
+                                                    ^
+ERROR:  INSERT has more target columns than expressions
+LINE 12: INSERT INTO users (name, age) VALUES ('a');
+                                  ^
+ERROR:  column "nope" of relation "users" does not exist
+LINE 13: INSERT INTO users (name, nope) VALUES ('a', 1);
+                                  ^
+ERROR:  column "name" specified more than once
+LINE 14: INSERT INTO users (name, name) VALUES ('a', 'b');
+                                  ^
+ERROR:  null value in column "tag" of relation "Users" violates not-null constraint
+LINE 15: INSERT INTO "Users" (tag) VALUES (NULL);
+                                           ^
+ERROR:  operator does not exist: text = integer
+LINE 16: SELECT * FROM users WHERE name = 1;
+                                        ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.
+ERROR:  operator does not exist: integer <= text
+LINE 18:   WHERE 5 <= name;
+                   ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.
+ERROR:  invalid input syntax for type bigint: "x"
+LINE 19: SELECT * FROM users WHERE age = 'x';
+                                         ^
+ERROR:  column "nope" does not exist
+LINE 20: SELECT nope FROM users;
+                ^
+ERROR:  relation "nope" does not exist
+LINE 21: SELECT * FROM nope;
+                       ^
+ERROR:  schema "other" does not exist
+LINE 22: SELECT * FROM other.users;
+                       ^
+ERROR:  LIMIT must not be negative
+LINE 23: SELECT * FROM users LIMIT -1;
+                                   ^
+ name 
+------
+ ok
+ 1
+ ok3
+(3 rows)
+
+INSERT 0 3
+[exit 1]

@@ -133,3 +133,27 @@ def test_statement_text_position():
     with pytest.raises(SqlSyntaxError) as ei:
         parse_statement(sql)
     assert caret_col(format_error(sql, ei.value)) == len("LINE 1: INSERT INTO t VALUES (1, 2), ")
+
+
+def test_detail_and_hint_follow_caret():
+    from minidb.errors import GeneratedAlways, UndefinedFunction
+
+    sql = "SELECT * FROM t WHERE name = 1"
+    err = UndefinedFunction("operator does not exist: text = integer", position=sql.index("=") + 1, hint="Cast it.")
+    assert format_error(sql, err) == (
+        "ERROR:  operator does not exist: text = integer\n"
+        "LINE 1: SELECT * FROM t WHERE name = 1\n"
+        "                                   ^\n"
+        "HINT:  Cast it."
+    )
+    err2 = GeneratedAlways("cannot insert", detail="Column is identity.", hint="Use DEFAULT.")
+    assert format_error("x", err2) == "ERROR:  cannot insert\nDETAIL:  Column is identity.\nHINT:  Use DEFAULT."
+
+
+def test_position_and_line_offsets_for_streamed_fragment():
+    # 원문 "...(1000줄)...\nSELECT * FORM t" 중 마지막 줄만 넘기고 오프셋으로 보정
+    fragment = "SELECT * FORM t"
+    err = SqlSyntaxError('syntax error at or near "FORM"', position=5000 + 10)
+    out = format_error(fragment, err, position_offset=5000, line_offset=999)
+    assert out.splitlines()[1] == "LINE 1000: SELECT * FORM t"
+    assert caret_col(out) == len("LINE 1000: SELECT * ")

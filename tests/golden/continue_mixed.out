@@ -1,0 +1,32 @@
+INSERT 0 1
+ERROR:  syntax error at or near "FORM"
+LINE 4: SELECT * FORM users;
+                 ^
+INSERT 0 1
+ERROR:  UPDATE statements are not supported
+LINE 6: UPDATE users SET name = 'x';
+        ^
+ERROR:  OR in WHERE clause is not supported
+LINE 7: SELECT * FROM users WHERE id = 1 OR id = 2;
+                                         ^
+INSERT 0 3
+  name  
+--------
+ first
+ second
+ third
+ 
+ a
+(5 rows)
+
+ERROR:  null value in column "tag" of relation "Users" violates not-null constraint
+LINE 11: INSERT INTO "Users" (tag) VALUES ('t1'), (NULL);
+                                                   ^
+ id | tag 
+----+-----
+(0 rows)
+
+ERROR:  unterminated quoted string
+LINE 13: SELECT 'never closed FROM users;
+                ^
+[exit 1]

@@ -1,0 +1,5 @@
+INSERT 0 1
+ERROR:  invalid input syntax for type bigint: "oops"
+LINE 3: SELECT * FROM users WHERE age = 'oops';
+                                        ^
+[exit 1]

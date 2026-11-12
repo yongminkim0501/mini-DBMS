@@ -86,3 +86,15 @@ def test_iter_statements_matches_split():
         return [(s.text, s.start_offset, s.error and s.error.message) for s in srcs]
 
     assert key(iter_statements(sql)) == key(split_statements(sql))
+
+
+def test_base_offset_shifts_offsets_and_errors():
+    from minidb.sql.lexer import iter_statements, iter_tokens
+
+    toks = list(iter_tokens("SELECT a", base_offset=100))
+    assert [(t.offset, t.end) for t in toks] == [(100, 106), (107, 108), (108, 108)]
+    srcs = list(iter_statements("x; SELECT 'q", base_offset=1000))
+    assert (srcs[0].text, srcs[0].start_offset) == ("x", 1000)
+    assert srcs[0].tokens[0].offset == 1000
+    assert (srcs[1].text, srcs[1].start_offset) == ("SELECT 'q", 1003)
+    assert srcs[1].error.position == 1000 + len("x; SELECT ") + 1

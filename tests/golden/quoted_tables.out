@@ -1,0 +1,27 @@
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+ id |      name       | age 
+----+-----------------+-----
+  1 | lower           |    
+  2 | folded-to-lower |    
+(2 rows)
+
+ id |  tag  
+----+-------
+  1 | UPPER
+(1 row)
+
+ id |      name       | age 
+----+-----------------+-----
+  1 | lower           |    
+  2 | folded-to-lower |    
+(2 rows)
+
+ERROR:  relation "USERS" does not exist
+LINE 9: SELECT * FROM "USERS";
+                      ^
+ERROR:  column "tag" does not exist
+LINE 10: SELECT tag FROM users;
+                ^
+[exit 1]

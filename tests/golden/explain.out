@@ -1,0 +1,41 @@
+    QUERY PLAN     
+-------------------
+ Seq Scan on users
+(1 row)
+
+                      QUERY PLAN                       
+-------------------------------------------------------
+ Limit
+   ->  Seq Scan on users
+         Filter: ((age > 30) AND (name = 'kim'::text))
+(3 rows)
+
+                        QUERY PLAN                        
+----------------------------------------------------------
+ Seq Scan on users
+   Filter: ((age = '25'::bigint) AND (name = NULL::text))
+(2 rows)
+
+     QUERY PLAN      
+---------------------
+ Seq Scan on users
+   Filter: (age > 5)
+(2 rows)
+
+   QUERY PLAN    
+-----------------
+ Insert on users
+   ->  Result
+(2 rows)
+
+           QUERY PLAN            
+---------------------------------
+ Insert on users
+   ->  Values Scan on "*VALUES*"
+(2 rows)
+
+ id | name | age 
+----+------+-----
+(0 rows)
+
+[exit 0]

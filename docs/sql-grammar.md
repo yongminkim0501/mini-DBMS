@@ -8,7 +8,7 @@ minidb 는 PostgreSQL 문법의 **부분집합**을 지원한다. 오류는 Post
 
 ```
 script         := statement { ';' statement } [ ';' ]          -- 빈 문장(;;)은 무시
-statement      := insert | select
+statement      := [ EXPLAIN [ ANALYZE ] ] ( insert | select )
 
 insert         := INSERT INTO qualified_name [ '(' ident { ',' ident } ')' ]
                   VALUES row { ',' row }
@@ -30,7 +30,7 @@ qualified_name := ident [ '.' ident ]
 
 ### 파서의 구조 (재귀 하강)
 
-문법 규칙 하나가 `_Parser` 메서드 하나에 대응한다(`statement → _statement()`, `insert → _insert()`,
+문법 규칙 하나가 `_Parser` 메서드 하나에 대응한다(`statement → _statement()` (EXPLAIN 접두사 포함), `insert → _insert()`,
 `row → _row()`, `cond → _cond()` …). 반복 `{ ',' row }` 는 "다음 토큰이 `,` 인 동안 `_row()` 호출" 하는
 while 루프가 되고, 선택 `[ RETURNING … ]` 은 "다음 토큰이 RETURNING 이면" 하는 if 가 된다.
 이 문법은 **LL(1)** 이다. 다음 토큰 하나만 보면 어느 분기인지 항상 정해지므로 되돌아가기(backtracking)가 없다.
@@ -61,7 +61,7 @@ while 루프가 되고, 선택 `[ RETURNING … ]` 은 "다음 토큰이 RETURNI
 | 공백 | 스페이스, 탭, `\r`, `\n` |
 | 줄 주석 | `--` 부터 줄 끝까지 |
 | 블록 주석 | `/* … */`, PostgreSQL 처럼 **중첩 지원**: `/* a /* b */ c */` 전체가 주석. 닫히지 않으면 `unterminated /* comment` |
-| 예약 키워드 | `SELECT FROM WHERE INSERT INTO VALUES RETURNING LIMIT ALL AND NULL DEFAULT` (대소문자 무시). 비인용으로 식별자 자리에 오면 구문 오류 |
+| 예약 키워드 | `SELECT FROM WHERE INSERT INTO VALUES RETURNING LIMIT ALL AND NULL DEFAULT EXPLAIN ANALYZE` (대소문자 무시). 비인용으로 식별자 자리에 오면 구문 오류 |
 | 비인용 식별자 | 첫 글자: ASCII 영문자, `_`, 비 ASCII 문자(U+0080 이상). 이후: 여기에 ASCII 숫자와 `$` 추가. **ASCII A-Z 만** 소문자로 변환 (§2.1) |
 | 인용 식별자 | `"…"`, 대소문자 유지, `""` → `"`. 빈 식별자는 `zero-length delimited identifier`, 닫히지 않으면 `unterminated quoted identifier` |
 | 식별자 길이 | UTF-8 **63바이트** 초과면 `NameTooLong` (42622) |
@@ -137,7 +137,9 @@ StatementSource(text, start_offset, error=None, tokens=None)
 | `INSERT … VALUES` (다중 행, 컬럼 목록, `DEFAULT`, `RETURNING */목록`) | ✅ | |
 | `SELECT */목록 FROM [schema.]t [WHERE … AND …] [LIMIT n/ALL]` | ✅ | |
 | 비교 `= <> != < <= > >=`, 리터럴이 왼쪽인 조건 | ✅ | |
-| `UPDATE`, `DELETE`, `CREATE`, `DROP`, `ALTER`, `BEGIN`, `COMMIT`, `ROLLBACK`, `WITH`, `EXPLAIN` … | ❌ | 0A000 `UPDATE statements are not supported` |
+| `EXPLAIN [ANALYZE] insert/select` | ✅ | 형식은 docs/execution.md |
+| `EXPLAIN (옵션…)`, `EXPLAIN VERBOSE` | ❌ | 0A000 / 42601 |
+| `UPDATE`, `DELETE`, `CREATE`, `DROP`, `ALTER`, `BEGIN`, `COMMIT`, `ROLLBACK`, `WITH` … | ❌ | 0A000 `UPDATE statements are not supported` |
 | `WHERE … OR …` | ❌ | 0A000 `OR in WHERE clause is not supported` |
 | `WHERE NOT …` | ❌ | 0A000 `NOT in WHERE clause is not supported` |
 | `IS [NOT] NULL`, `IN`, `LIKE`, `BETWEEN` | ❌ | 0A000 |
