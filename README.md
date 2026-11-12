@@ -9,7 +9,7 @@ Krafton Jungle Week 12 DBMS 구현
 | Phase | 내용 | 상태 |
 |---|---|---|
 | 0 | 저장 계층(TableFile, 포맷 v2: 레코드 CRC + quarantine 복구), 스키마 카탈로그, SQLSTATE 에러 체계 | ✅ |
-| 1 | SQL 처리기 (INSERT/SELECT, CLI) | |
+| 1 | SQL 처리기: 렉서·파서·AST (docs/sql-grammar.md) ✅ / 바인더·실행기·CLI | 진행 중 |
 | 2 | id 기반 메모리 B+ 트리 인덱스 | |
 | 3 | 스레드 풀 API 서버 (PostgreSQL wire protocol) | |
 
@@ -20,8 +20,10 @@ minidb/errors.py      SQLSTATE 예외 체계
 minidb/catalog.py     스키마 JSON 로딩/검증 (db/schema/<table>.json)
 minidb/storage.py     TableFile: 레코드 인코딩/디코딩, 파일 I/O (db/data/<table>.tbl)
 minidb/tools/dump.py  테이블 파일 덤프
+minidb/sql/           렉서, 문장 분리, AST, 재귀 하강 파서, psql 스타일 에러 출력
 scripts/bench_storage.py  저장 계층 벤치마크 → results/*.json
 docs/storage-format.md    파일 포맷과 설계 이유
+docs/sql-grammar.md       지원 SQL 문법(BNF), 렉싱 규칙, PostgreSQL 과의 차이
 ```
 
 ## 실행
