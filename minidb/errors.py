@@ -20,6 +20,10 @@ __all__ = [
     "InvalidParameterValue",
     "SequenceGeneratorLimitExceeded",
     "CharacterNotInRepertoire",
+    "SqlSyntaxError",
+    "FeatureNotSupported",
+    "NameTooLong",
+    "InvalidRowCountInLimitClause",
 ]
 
 
@@ -29,16 +33,19 @@ class DatabaseError(Exception):
     Attributes:
         sqlstate: 5자리 PostgreSQL SQLSTATE 코드.
         message: 사람이 읽을 수 있는 오류 메시지.
+        position: SQL 원문 기준 1부터 시작하는 문자 위치 (PostgreSQL ErrorResponse 의 P 필드).
+            SQL 텍스트와 관계없는 오류(저장 계층 등)는 None.
     """
 
     #: 하위 클래스가 덮어쓰는 기본 SQLSTATE (XX000 = internal_error)
     default_sqlstate: str = "XX000"
 
-    def __init__(self, message: str, *, sqlstate: str | None = None) -> None:
-        """메시지와 (선택적으로) SQLSTATE 를 지정해 예외를 만든다."""
+    def __init__(self, message: str, *, sqlstate: str | None = None, position: int | None = None) -> None:
+        """메시지와 (선택적으로) SQLSTATE, SQL 원문 위치를 지정해 예외를 만든다."""
         super().__init__(message)
         self.message: str = message
         self.sqlstate: str = sqlstate if sqlstate is not None else self.default_sqlstate
+        self.position: int | None = position
 
     def __str__(self) -> str:
         return f"ERROR:  {self.message} (SQLSTATE {self.sqlstate})"
@@ -102,3 +109,27 @@ class CharacterNotInRepertoire(DatabaseError):
     """UTF-8 로 인코딩할 수 없는 문자열 (짝 없는 서로게이트 등) (22021)."""
 
     default_sqlstate = "22021"
+
+
+class SqlSyntaxError(DatabaseError):
+    """SQL 구문 오류 (42601). 파이썬 내장 SyntaxError 와 이름이 겹치지 않게 Sql 접두사를 붙였다."""
+
+    default_sqlstate = "42601"
+
+
+class FeatureNotSupported(DatabaseError):
+    """PostgreSQL 에는 있지만 minidb 가 지원하지 않는 기능 (0A000)."""
+
+    default_sqlstate = "0A000"
+
+
+class NameTooLong(DatabaseError):
+    """식별자가 63바이트(UTF-8)를 넘음 (42622)."""
+
+    default_sqlstate = "42622"
+
+
+class InvalidRowCountInLimitClause(DatabaseError):
+    """LIMIT 에 음수 (2201W)."""
+
+    default_sqlstate = "2201W"
