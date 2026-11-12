@@ -26,7 +26,7 @@ from ..errors import (
     SqlSyntaxError,
 )
 from .ast import Condition, Default, InsertStmt, Literal, QualifiedName, SelectStmt, Star, Statement
-from .lexer import StatementSource, split_statements, tokenize
+from .lexer import StatementSource, iter_statements, tokenize
 from .tokens import Token, TokenType
 
 __all__ = ["parse_statement", "parse_script"]
@@ -427,7 +427,8 @@ def _tokenize_with_position(source: StatementSource) -> list[Token]:
 def parse_script(text: str) -> list[Statement]:
     """세미콜론으로 구분된 여러 문장을 파싱한다. 첫 오류에서 예외 (position 은 ``text`` 기준).
 
-    문장별로 계속 진행하고 싶으면(``--on-error continue``) :func:`split_statements` 와
-    :func:`parse_statement` 를 직접 조합한다.
+    문장별로 계속 진행하고 싶으면(``--on-error continue``) :func:`~minidb.sql.lexer.split_statements` 와
+    :func:`parse_statement` 를 직접 조합한다. 문장은 스트리밍으로 분리하므로(iter_statements)
+    파싱이 끝난 문장의 토큰은 바로 해제된다.
     """
-    return [parse_statement(src) for src in split_statements(text)]
+    return [parse_statement(src) for src in iter_statements(text)]

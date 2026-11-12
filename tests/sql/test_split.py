@@ -76,3 +76,13 @@ def test_tokens_are_kept_for_parser():
     assert s.tokens is not None
     assert [t.value for t in s.tokens] == ["SELECT", "a", "FROM", "t"]
     assert s.tokens[0].offset == 2  # 원문 기준
+
+
+def test_iter_statements_matches_split():
+    from minidb.sql.lexer import iter_statements
+
+    sql = "SELECT 1; ;SELECT 'a;b'; SELECT 'oops"
+    def key(srcs):
+        return [(s.text, s.start_offset, s.error and s.error.message) for s in srcs]
+
+    assert key(iter_statements(sql)) == key(split_statements(sql))

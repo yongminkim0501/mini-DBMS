@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from ..errors import DatabaseError, FeatureNotSupported, NameTooLong, SqlSyntaxError
 from .tokens import RESERVED_KEYWORDS, Token, TokenType
 
-__all__ = ["MAX_IDENTIFIER_BYTES", "StatementSource", "iter_tokens", "tokenize", "split_statements"]
+__all__ = ["MAX_IDENTIFIER_BYTES", "StatementSource", "iter_tokens", "tokenize", "iter_statements", "split_statements"]
 
 #: 식별자 최대 길이 (UTF-8 바이트). PostgreSQL 의 NAMEDATALEN - 1.
 MAX_IDENTIFIER_BYTES = 63
@@ -244,6 +244,34 @@ class StatementSource:
     tokens: tuple[Token, ...] | None = field(default=None, repr=False, compare=False)
 
 
+def iter_statements(text: str) -> Iterator[StatementSource]:
+    """:func:`split_statements` 의 스트리밍 버전. 문장을 하나씩 내보낸다.
+
+    큰 스크립트에서 모든 문장의 토큰을 한꺼번에 메모리에 들고 있지 않아도 되므로,
+    파싱·실행을 문장 단위로 이어 붙이면 메모리와 GC 부담이 줄어든다 (parse_script 가 이 방식을 쓴다).
+    """
+    cur: list[Token] = []  # 현재 문장의 토큰
+    SEMI, EOF = TokenType.SEMICOLON, TokenType.EOF
+    append = cur.append
+    try:
+        # try 를 루프 밖에 두어 토큰마다 예외 처리 비용을 내지 않는다.
+        for tok in iter_tokens(text):
+            tt = tok.type
+            if tt is SEMI or tt is EOF:
+                # 세미콜론 "토큰"에서만 자른다. 문자열/주석 안의 ';' 는 애초에 토큰이 아니다.
+                if cur:
+                    start, end = cur[0].offset, cur[-1].end
+                    yield StatementSource(text[start:end], start, None, tuple(cur))
+                    cur.clear()
+            else:
+                append(tok)
+    except DatabaseError as exc:
+        # 오류 문장의 시작: 이미 토큰이 있으면 그 첫 토큰, 없으면 오류 위치.
+        # 오류 이후는 렉서가 해석할 수 없으므로 원문 끝까지를 한 덩어리로 담고 멈춘다.
+        start = cur[0].offset if cur else (exc.position - 1 if exc.position else len(text))
+        yield StatementSource(text[start:], start, exc)
+
+
 def split_statements(text: str) -> list[StatementSource]:
     """``text`` 를 세미콜론 **토큰** 기준으로 문장 단위로 나눈다.
 
@@ -255,23 +283,4 @@ def split_statements(text: str) -> list[StatementSource]:
     렉서는 오류 지점 이후를 어떻게 해석해야 할지 모르므로(예: 닫히지 않은 따옴표 뒤는 전부 문자열일 수 있음)
     그 뒤로는 분리하지 않는다. 구문 오류(파서 오류)는 여기서 검사하지 않으므로 다른 문장에 영향이 없다.
     """
-    out: list[StatementSource] = []
-    cur: list[Token] = []  # 현재 문장의 토큰
-    it = iter_tokens(text)
-    while True:
-        try:
-            tok = next(it)
-        except DatabaseError as exc:
-            # 오류 문장의 시작: 이미 토큰이 있으면 그 첫 토큰, 없으면 오류 위치.
-            start = cur[0].offset if cur else (exc.position - 1 if exc.position else len(text))
-            out.append(StatementSource(text[start:], start, exc))
-            return out
-        if tok.type is TokenType.SEMICOLON or tok.type is TokenType.EOF:
-            if cur:
-                start, end = cur[0].offset, cur[-1].end
-                out.append(StatementSource(text[start:end], start, None, tuple(cur)))
-                cur = []
-            if tok.type is TokenType.EOF:
-                return out
-        else:
-            cur.append(tok)
+    return list(iter_statements(text))
