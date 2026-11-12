@@ -226,6 +226,6 @@ class Catalog:
         except json.JSONDecodeError as exc:
             raise InvalidSchemaDefinition(f"invalid JSON in {path.name}: {exc}") from exc
         schema = parse_schema(data, expected_name=key)
-        # Phase 3: 이 캐시 갱신은 락으로 보호할 지점.
+        # [LOCK] Phase 3: 캐시 갱신은 락으로 보호할 지점.
         self._cache[key] = schema
         return schema

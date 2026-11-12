@@ -233,6 +233,7 @@ class TableFile:
 
     def _sync_reads(self) -> None:
         """read-your-writes: 버퍼에 남은 쓰기를 OS 로 내보내 읽기 핸들이 볼 수 있게 한다."""
+        # [LOCK] 읽기가 쓰기 버퍼를 건드리는 유일한 지점: append 와 상호 배제 필요.
         if self._dirty and self._writer is not None:
             self._writer.flush()
             self._dirty = False
@@ -402,6 +403,7 @@ class TableFile:
         self._check_open()
         if type(offset) is not int:
             raise ValueError(f"offset must be an int, got {type(offset).__name__}")
+        # [LOCK] _end/_next_id 스냅샷 (읽기 락). 아래 pread 자체는 위치 공유가 없어 병렬 가능.
         end = self._end
         if not HEADER_SIZE <= offset < end:
             raise ValueError(f"offset {offset} out of range [{HEADER_SIZE}, {end})")
@@ -433,6 +435,7 @@ class TableFile:
         """
         self._check_open()
         self._sync_reads()
+        # [LOCK] _end 스냅샷: append 와 일관된 값을 얻으려면 읽기 락 아래에서 읽는다.
         end = self._end
         return self._records_gen(end)
 
@@ -476,6 +479,7 @@ class TableFile:
         self._check_open()
         if self._writer is None:
             return
+        # [LOCK] flush: 쓰기 핸들/_dirty 접근 (쓰기 락).
         self._writer.flush()
         self._dirty = False
         if durable:
@@ -487,6 +491,7 @@ class TableFile:
             return
         try:
             if self._writer is not None:
+                # [LOCK] close: 쓰기 핸들 사용 + 닫힘 상태 전이 (쓰기 락).
                 self._writer.flush()
         finally:
             self._abort()
