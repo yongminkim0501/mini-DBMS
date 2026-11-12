@@ -80,16 +80,23 @@ def _check_ident_length(name: str, offset: int) -> None:
         )
 
 
-def iter_tokens(text: str) -> Iterator[Token]:
+def iter_tokens(text: str, *, base_offset: int = 0) -> Iterator[Token]:
     """``text`` 를 토큰으로 쪼개 하나씩 내보낸다. 마지막은 항상 EOF 토큰.
 
     공백과 주석은 토큰을 만들지 않는다. 오류(닫히지 않은 문자열 등)는 그 지점에서
     예외로 올라가며, 그 전에 내보낸 토큰은 유효하다 (split_statements 가 이 성질을 이용한다).
 
+    Args:
+        text: SQL 텍스트.
+        base_offset: ``text[0]`` 의 원문 기준 위치. 토큰 offset/end 와 오류 position 에 더해진다.
+            큰 스크립트를 청크로 나눠 렉싱할 때(CLI 스트리밍) 원문 기준 위치를 유지하기 위해 쓴다.
+            line/column 은 ``text`` 기준이다.
+
     Raises:
         SqlSyntaxError, FeatureNotSupported, NameTooLong: 렉싱 오류. ``position`` 은 ``offset + 1``.
     """
     match = _TOKEN_RE.match
+    b = base_offset
     n = len(text)
     pos = 0
     line = 1
@@ -110,10 +117,10 @@ def iter_tokens(text: str) -> Iterator[Token]:
             low = fold_identifier(word)
             kw = keywords.get(low)
             if kw is not None:
-                yield Token(T.KEYWORD, kw, pos, end, line, pos - line_start + 1)
+                yield Token(T.KEYWORD, kw, pos + b, end + b, line, pos - line_start + 1)
             else:
-                _check_ident_length(low, pos)
-                yield Token(T.IDENT, low, pos, end, line, pos - line_start + 1)
+                _check_ident_length(low, pos + b)
+                yield Token(T.IDENT, low, pos + b, end + b, line, pos - line_start + 1)
             pos = end
             continue
 
@@ -128,7 +135,7 @@ def iter_tokens(text: str) -> Iterator[Token]:
 
         if kind == "op1" or kind == "op2":
             sym = m.group()
-            yield Token(op_types[sym], sym, pos, end, line, pos - line_start + 1)
+            yield Token(op_types[sym], sym, pos + b, end + b, line, pos - line_start + 1)
             pos = end
             continue
 
@@ -136,17 +143,17 @@ def iter_tokens(text: str) -> Iterator[Token]:
             if end < n and _TRAILING_JUNK_RE.match(text, end):
                 junk_end = _TOKEN_RE.match(text, end).end()  # 붙어 있는 식별자 끝까지
                 raise SqlSyntaxError(
-                    f'trailing junk after numeric literal at or near "{text[pos:junk_end]}"', position=pos + 1
+                    f'trailing junk after numeric literal at or near "{text[pos:junk_end]}"', position=pos + b + 1
                 )
-            yield Token(T.INTEGER, int(m.group()), pos, end, line, pos - line_start + 1)
+            yield Token(T.INTEGER, int(m.group()), pos + b, end + b, line, pos - line_start + 1)
             pos = end
             continue
 
         if kind == "string":
             raw = m.group()
             if len(raw) < 2 or raw[-1] != "'" or _odd_trailing_quotes(raw):
-                raise SqlSyntaxError("unterminated quoted string", position=pos + 1)
-            yield Token(T.STRING, raw[1:-1].replace("''", "'"), pos, end, line, pos - line_start + 1)
+                raise SqlSyntaxError("unterminated quoted string", position=pos + b + 1)
+            yield Token(T.STRING, raw[1:-1].replace("''", "'"), pos + b, end + b, line, pos - line_start + 1)
             nl = raw.count("\n")
             if nl:  # 문자열 안의 줄바꿈도 줄 번호에 반영
                 line += nl
@@ -157,12 +164,12 @@ def iter_tokens(text: str) -> Iterator[Token]:
         if kind == "qident":
             raw = m.group()
             if len(raw) < 2 or raw[-1] != '"' or _odd_trailing_quotes(raw):
-                raise SqlSyntaxError("unterminated quoted identifier", position=pos + 1)
+                raise SqlSyntaxError("unterminated quoted identifier", position=pos + b + 1)
             name = raw[1:-1].replace('""', '"')
             if not name:
-                raise SqlSyntaxError("zero-length delimited identifier", position=pos + 1)
-            _check_ident_length(name, pos)
-            yield Token(T.IDENT, name, pos, end, line, pos - line_start + 1, True)
+                raise SqlSyntaxError("zero-length delimited identifier", position=pos + b + 1)
+            _check_ident_length(name, pos + b)
+            yield Token(T.IDENT, name, pos + b, end + b, line, pos - line_start + 1, True)
             nl = raw.count("\n")
             if nl:
                 line += nl
@@ -182,7 +189,7 @@ def iter_tokens(text: str) -> Iterator[Token]:
             while depth:
                 d = _COMMENT_DELIM_RE.search(text, scan)
                 if d is None:
-                    raise SqlSyntaxError("unterminated /* comment", position=pos + 1)
+                    raise SqlSyntaxError("unterminated /* comment", position=pos + b + 1)
                 depth += 1 if d.group() == "/*" else -1
                 scan = d.end()
             nl = text.count("\n", pos, scan)
@@ -193,22 +200,22 @@ def iter_tokens(text: str) -> Iterator[Token]:
             continue
 
         if kind == "numeric":
-            raise FeatureNotSupported("numeric literals are not supported", position=pos + 1)
+            raise FeatureNotSupported("numeric literals are not supported", position=pos + b + 1)
         if kind == "prefixed_string":
             prefix = m.group()[:-1]
             raise FeatureNotSupported(
-                f"{prefix.upper()}'...' string literals are not supported", position=pos + 1
+                f"{prefix.upper()}'...' string literals are not supported", position=pos + b + 1
             )
         if kind == "unicode_ident":
-            raise FeatureNotSupported('U&"..." identifiers are not supported', position=pos + 1)
+            raise FeatureNotSupported('U&"..." identifiers are not supported', position=pos + b + 1)
         if kind == "param":
-            raise FeatureNotSupported(f"parameters ({m.group()}) are not supported", position=pos + 1)
+            raise FeatureNotSupported(f"parameters ({m.group()}) are not supported", position=pos + b + 1)
         if kind == "dollar_quote":
-            raise FeatureNotSupported("dollar-quoted strings are not supported", position=pos + 1)
+            raise FeatureNotSupported("dollar-quoted strings are not supported", position=pos + b + 1)
         # other: 알 수 없는 문자
-        raise SqlSyntaxError(f'syntax error at or near "{m.group()}"', position=pos + 1)
+        raise SqlSyntaxError(f'syntax error at or near "{m.group()}"', position=pos + b + 1)
 
-    yield Token(T.EOF, None, n, n, line, n - line_start + 1)
+    yield Token(T.EOF, None, n + b, n + b, line, n - line_start + 1)
 
 
 def _odd_trailing_quotes(raw: str) -> bool:
@@ -247,32 +254,34 @@ class StatementSource:
     tokens: tuple[Token, ...] | None = field(default=None, repr=False, compare=False)
 
 
-def iter_statements(text: str) -> Iterator[StatementSource]:
+def iter_statements(text: str, *, base_offset: int = 0) -> Iterator[StatementSource]:
     """:func:`split_statements` 의 스트리밍 버전. 문장을 하나씩 내보낸다.
 
     큰 스크립트에서 모든 문장의 토큰을 한꺼번에 메모리에 들고 있지 않아도 되므로,
     파싱·실행을 문장 단위로 이어 붙이면 메모리와 GC 부담이 줄어든다 (parse_script 가 이 방식을 쓴다).
+    ``base_offset`` 은 :func:`iter_tokens` 와 같은 의미 (start_offset, 토큰, 오류 위치가 원문 기준이 된다).
     """
+    b = base_offset
     cur: list[Token] = []  # 현재 문장의 토큰
     SEMI, EOF = TokenType.SEMICOLON, TokenType.EOF
     append = cur.append
     try:
         # try 를 루프 밖에 두어 토큰마다 예외 처리 비용을 내지 않는다.
-        for tok in iter_tokens(text):
+        for tok in iter_tokens(text, base_offset=b):
             tt = tok.type
             if tt is SEMI or tt is EOF:
                 # 세미콜론 "토큰"에서만 자른다. 문자열/주석 안의 ';' 는 애초에 토큰이 아니다.
                 if cur:
                     start, end = cur[0].offset, cur[-1].end
-                    yield StatementSource(text[start:end], start, None, tuple(cur))
+                    yield StatementSource(text[start - b : end - b], start, None, tuple(cur))
                     cur.clear()
             else:
                 append(tok)
     except DatabaseError as exc:
         # 오류 문장의 시작: 이미 토큰이 있으면 그 첫 토큰, 없으면 오류 위치.
         # 오류 이후는 렉서가 해석할 수 없으므로 원문 끝까지를 한 덩어리로 담고 멈춘다.
-        start = cur[0].offset if cur else (exc.position - 1 if exc.position else len(text))
-        yield StatementSource(text[start:], start, exc)
+        start = cur[0].offset if cur else (exc.position - 1 if exc.position else len(text) + b)
+        yield StatementSource(text[start - b :], start, exc)
 
 
 def split_statements(text: str) -> list[StatementSource]:
