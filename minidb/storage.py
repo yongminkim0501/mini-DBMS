@@ -331,6 +331,7 @@ class TableFile:
 
         offset 위치의 레코드를 다음 순서로 판정한다 (docs/storage-format.md 의 표 참고):
 
+        0. offset 부터 파일 끝까지 전부 0               → 잘린 꼬리 (1~6 보다 먼저)
         1. 남은 바이트 < 12                          → 잘린 꼬리
         2. header_crc 불일치                          → DataCorrupted (length 를 믿을 수 없음)
         3. length < 본문 최소 크기                     → DataCorrupted
@@ -345,7 +346,16 @@ class TableFile:
         last_id = 0
         good_end = HEADER_SIZE  # 마지막으로 온전한 레코드의 끝 = 잘린 꼬리가 있으면 truncate 위치
         with open(self.path, "rb", buffering=0) as f:
+            # 판정 0 준비: 파일 끝에서부터 이어지는 0 바이트 구간의 시작 위치.
+            # offset >= zero_start 이면 "offset 부터 EOF 까지 전부 0" 이다. 매 offset 마다 남은 바이트를
+            # 다시 훑지 않도록 한 번만 계산한다 (보통 마지막 몇 바이트만 읽고 끝난다).
+            zero_start = _zero_tail_start(f, HEADER_SIZE, size)
             for kind, offset, buf, p, length, body_ok in _iter_raw(f, HEADER_SIZE, size, min_body):
+                if offset >= zero_start:
+                    # 판정 0: 남은 바이트가 전부 0 → 잘린 꼬리 (크래시 때 파일 시스템이 크기만 늘리고 0 으로 채운 경우).
+                    # 정상 레코드는 length >= 최소 본문 크기 > 0 이라 레코드 헤더 12바이트가 전부 0 일 수 없으므로
+                    # 정상 데이터를 꼬리로 오판하지 않는다. quarantine 이 바이트를 보존하므로 비파괴적이다.
+                    break
                 if kind == _EV_BAD_HEADER:  # 판정 2
                     raise DataCorrupted(
                         f"record header checksum mismatch at offset {offset} in \"{self.path.name}\""
@@ -697,6 +707,23 @@ def inspect_records(path: str | Path, schema: TableSchema) -> Iterator[RecordChe
 
 
 # ---------------------------------------------------------------- 내부 함수
+def _zero_tail_start(f: BinaryIO, start: int, end: int) -> int:
+    """``[start, end)`` 에서 파일 끝까지 이어지는 0 바이트 구간의 시작 위치를 반환한다 (0 구간이 없으면 ``end``).
+
+    뒤에서부터 청크 단위로 읽으며 0 이 아닌 마지막 바이트를 찾는다. 호출 후 파일 위치는 보장하지 않는다.
+    """
+    pos = end
+    while pos > start:
+        n = min(_SCAN_CHUNK, pos - start)
+        f.seek(pos - n)
+        chunk = f.read(n)
+        stripped = chunk.rstrip(b"\x00")
+        if stripped:
+            return pos - n + len(stripped)
+        pos -= n
+    return start
+
+
 def _fsync_dir(directory: Path) -> None:
     """디렉터리 엔트리 변경(새 파일 생성)을 디스크에 반영한다. 지원하지 않는 플랫폼에서는 무시."""
     try:

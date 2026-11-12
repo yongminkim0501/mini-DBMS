@@ -712,3 +712,75 @@ def test_quarantine_name_collision(path, monkeypatch):
     assert (path.parent / base).read_bytes() == b"old"  # 기존 파일은 덮어쓰지 않는다
     assert (path.parent / (base + "-1")).read_bytes() == b"old1"
     assert (path.parent / (base + "-2")).stat().st_size == 3
+
+
+# ------------------------------------------------------------------ 판정 0: 0 으로 채워진 꼬리
+
+
+@pytest.mark.parametrize("nzeros", [12, 100, 4096])
+def test_zero_filled_tail_is_quarantined(path, nzeros):
+    three_records(path)
+    good = path.stat().st_size
+    with open(path, "ab") as f:
+        f.write(b"\x00" * nzeros)
+    with pytest.warns(RuntimeWarning, match=f"truncated {nzeros} trailing byte"):
+        t = TableFile(path, USERS)
+    with t:
+        assert t.size == good == path.stat().st_size
+        assert t.next_id == 4
+        assert t.append(("after", 4)) == (4, good)
+    q = quarantine_files(path)
+    assert len(q) == 1 and q[0].read_bytes() == b"\x00" * nzeros
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        TableFile(path, USERS).close()
+
+
+def test_zero_filled_data_region_on_empty_table(path):
+    TableFile(path, USERS).close()
+    with open(path, "ab") as f:
+        f.write(b"\x00" * 50)
+    with pytest.warns(RuntimeWarning):
+        with TableFile(path, USERS) as t:
+            assert t.size == HEADER_SIZE and t.next_id == 1
+
+
+@pytest.mark.parametrize("where", [0, 20, 99], ids=["first", "middle", "last"])
+def test_nonzero_byte_among_zero_tail_is_corrupted(path, where):
+    three_records(path)
+    tail = bytearray(100)
+    tail[where] = 0x01
+    with open(path, "ab") as f:
+        f.write(bytes(tail))
+    before = path.read_bytes()
+    with pytest.raises(DataCorrupted, match="header checksum"):
+        TableFile(path, USERS)
+    assert path.read_bytes() == before
+    assert quarantine_files(path) == []
+
+
+def test_zero_filled_tail_readonly_never_modifies(path):
+    three_records(path)
+    good = path.stat().st_size
+    with open(path, "ab") as f:
+        f.write(b"\x00" * 100)
+    before_bytes = path.read_bytes()
+    before_dir = dir_listing(path)
+    with pytest.warns(RuntimeWarning, match="readonly"):
+        with TableFile(path, USERS, readonly=True) as t:
+            assert t.size == good
+            assert [r[0] for _, r in t.scan()] == [1, 2, 3]
+    assert path.read_bytes() == before_bytes
+    assert dir_listing(path) == before_dir
+
+
+def test_trailing_zero_bytes_inside_last_record_are_not_tail(path):
+    # 마지막 레코드가 0 바이트로 끝나도(age=0 의 상위 바이트 등) 정상 레코드로 인정해야 한다
+    with TableFile(path, USERS) as t:
+        t.append((None, 0))
+    raw = path.read_bytes()
+    assert raw.endswith(b"\x00" * 8)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with TableFile(path, USERS) as t:
+            assert [r for _, r in t.scan()] == [(1, None, 0)]
