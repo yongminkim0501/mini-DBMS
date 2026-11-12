@@ -1,0 +1,8 @@
+{
+  "table": "users",
+  "columns": [
+    {"name": "id",   "type": "BIGINT", "auto_increment": true},
+    {"name": "name", "type": "TEXT",   "nullable": true},
+    {"name": "age",  "type": "BIGINT", "nullable": true}
+  ]
+}
