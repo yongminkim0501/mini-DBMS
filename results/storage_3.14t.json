@@ -1,0 +1,33 @@
+{
+  "benchmark": "storage",
+  "timestamp": "2026-11-12T10:45:25+00:00",
+  "environment": {
+    "python_version": "3.14.6",
+    "python_full_version": "3.14.6 free-threading build (main, Jul 23 2026, 14:34:05) [Clang 22.1.3 ]",
+    "implementation": "CPython",
+    "free_threaded_build": true,
+    "gil_enabled": false,
+    "cpu_count": 10,
+    "platform": "macOS-15.1-arm64-arm-64bit-Mach-O",
+    "machine": "arm64"
+  },
+  "params": {
+    "rows": 1000000,
+    "batch": 10000,
+    "seed": 42,
+    "reads": 10000
+  },
+  "results": {
+    "load_seconds": 1.1298,
+    "load_rows_per_sec": 885106.9,
+    "data_generation_seconds": 2.4483,
+    "fsync_seconds": 0.0027,
+    "file_size_bytes": 37396053,
+    "bytes_per_row": 37.4,
+    "reopen_seconds": 0.2797,
+    "scan_seconds": 1.2552,
+    "scan_rows_per_sec": 796664.3,
+    "random_read_total_seconds": 0.0259,
+    "random_read_avg_us": 2.59
+  }
+}
