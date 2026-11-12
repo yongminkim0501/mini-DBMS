@@ -24,7 +24,7 @@ def test_dump_output(tmp_path):
     assert dump("users", str(db), out=out) == 3
     text = out.getvalue()
     assert "b'MDB1'" in text
-    assert "format_version : 1" in text
+    assert "format_version : 2" in text
     assert "column_count   : 3" in text
     assert "records        : 3" in text
     assert "next_id        : 4" in text

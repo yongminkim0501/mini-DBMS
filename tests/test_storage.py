@@ -1,5 +1,6 @@
 import struct
 import warnings
+import zlib
 
 import pytest
 
@@ -14,7 +15,16 @@ from minidb.errors import (
     ProgramLimitExceeded,
     SequenceGeneratorLimitExceeded,
 )
-from minidb.storage import BIGINT_MAX, BIGINT_MIN, FLAG_DELETED, HEADER_SIZE, MAGIC, TableFile
+from minidb.storage import (
+    BIGINT_MAX,
+    BIGINT_MIN,
+    FLAG_DELETED,
+    FORMAT_VERSION,
+    HEADER_SIZE,
+    MAGIC,
+    RECORD_HEADER_SIZE as RH,
+    TableFile,
+)
 
 USERS = parse_schema(
     {
@@ -47,6 +57,29 @@ def wide_schema(n):
             + [{"name": f"c{i}", "type": "BIGINT" if i % 2 else "TEXT"} for i in range(n)],
         }
     )
+
+
+def make_record(body, *, length=None):
+    """본문으로 v2 레코드 바이트를 만든다 (length 를 바꿔도 CRC 는 일관되게 다시 계산)."""
+    length = len(body) if length is None else length
+    len_crc = struct.pack("<II", length, zlib.crc32(body))
+    return len_crc + struct.pack("<I", zlib.crc32(len_crc)) + body
+
+
+def record_at(raw, off):
+    """raw 에서 off 위치 레코드의 (전체 크기, 본문) 을 반환한다."""
+    (length,) = struct.unpack_from("<I", raw, off)
+    return RH + length, bytes(raw[off + RH : off + RH + length])
+
+
+def rewrite_record(path, off, body=None, *, length=None):
+    """off 위치 레코드를 새 본문/length 로 바꾸고 CRC 를 다시 계산해 파일에 쓴다 (총 크기 유지 가정)."""
+    raw = bytearray(path.read_bytes())
+    size, old_body = record_at(raw, off)
+    new = make_record(old_body if body is None else body, length=length)
+    assert len(new) == size
+    raw[off : off + size] = new
+    path.write_bytes(bytes(raw))
 
 
 @pytest.fixture
@@ -98,7 +131,8 @@ def test_header_written(path):
     TableFile(path, USERS).close()
     raw = path.read_bytes()
     assert len(raw) == HEADER_SIZE
-    assert raw == MAGIC + struct.pack("<HH", 1, 3) + b"\x00" * 8
+    assert FORMAT_VERSION == 2
+    assert raw == MAGIC + struct.pack("<HH", 2, 3) + b"\x00" * 8
 
 
 def test_exact_record_bytes(path):
@@ -106,7 +140,8 @@ def test_exact_record_bytes(path):
         _, off = t.append(("홍", None))
     raw = path.read_bytes()[off:]
     body = b"\x00" + struct.pack("<q", 1) + b"\x02" + struct.pack("<I", 3) + "홍".encode()
-    assert raw == struct.pack("<I", len(body)) + body
+    len_crc = struct.pack("<II", len(body), zlib.crc32(body))
+    assert raw == len_crc + struct.pack("<I", zlib.crc32(len_crc)) + body
 
 
 @pytest.mark.parametrize("n, bitmap_len", [(7, 1), (8, 1), (9, 2), (16, 2), (17, 3)])
@@ -124,10 +159,10 @@ def test_null_bitmap_boundary(tmp_path, n, bitmap_len):
     (length,) = struct.unpack_from("<I", raw, off0)
     # 모든 컬럼 NULL 이면 본문 = flags(1) + id(8) + bitmap
     assert length == 1 + 8 + bitmap_len
-    bitmap = raw[off0 + 4 + 9 : off0 + 4 + 9 + bitmap_len]
+    bitmap = raw[off0 + RH + 9 : off0 + RH + 9 + bitmap_len]
     assert int.from_bytes(bitmap, "little") == (1 << n) - 1
     # 마지막 컬럼만 값이 있으면 그 비트만 0
-    bitmap1 = raw[off1 + 4 + 9 : off1 + 4 + 9 + bitmap_len]
+    bitmap1 = raw[off1 + RH + 9 : off1 + RH + 9 + bitmap_len]
     assert int.from_bytes(bitmap1, "little") == (1 << (n - 1)) - 1
 
 
@@ -288,7 +323,15 @@ def test_truncated_tail_recovered(path):
             assert len(list(t.scan())) == 3
 
 
-@pytest.mark.parametrize("extra", [b"\x01", b"\x01\x02\x03", struct.pack("<I", 100) + b"\x00" * 10])
+@pytest.mark.parametrize(
+    "extra",
+    [
+        b"\x01",
+        b"\x01\x02\x03",
+        b"\x00" * 11,  # 레코드 헤더(12B)에 1바이트 모자람
+        make_record(b"\x00" + struct.pack("<q", 2) + b"\x03")[:-3],  # 헤더는 온전, 본문 일부만
+    ],
+)
 def test_partial_length_or_body_tail(path, extra):
     with TableFile(path, USERS) as t:
         t.append(("a", 1))
@@ -328,7 +371,7 @@ def test_bad_magic(path):
 def test_bad_version(path):
     TableFile(path, USERS).close()
     raw = bytearray(path.read_bytes())
-    raw[4:6] = struct.pack("<H", 2)
+    raw[4:6] = struct.pack("<H", 3)
     path.write_bytes(bytes(raw))
     with pytest.raises(DataCorrupted):
         TableFile(path, USERS)
@@ -360,20 +403,20 @@ def test_length_below_minimum_is_corrupted(path):
     with TableFile(path, USERS) as t:
         _, off = t.append(("a", 1))
         t.append(("b", 2))
-    raw = bytearray(path.read_bytes())
-    raw[off : off + 4] = struct.pack("<I", 3)
-    path.write_bytes(bytes(raw))
-    with pytest.raises(DataCorrupted):
+    # header_crc 까지 다시 계산해서 "CRC 는 맞지만 length 가 최소보다 작은" 경우를 만든다 (판정 3)
+    rewrite_record(path, off, length=3)
+    size = path.stat().st_size
+    with pytest.raises(DataCorrupted, match="minimum"):
         TableFile(path, USERS)
+    assert path.stat().st_size == size
 
 
 def test_non_increasing_id_is_corrupted(path):
     with TableFile(path, USERS) as t:
         t.append(("a", 1))
         _, off2 = t.append(("b", 2))
-    raw = bytearray(path.read_bytes())
-    raw[off2 + 5 : off2 + 13] = struct.pack("<q", 1)
-    path.write_bytes(bytes(raw))
+    _, body = record_at(path.read_bytes(), off2)
+    rewrite_record(path, off2, body[:1] + struct.pack("<q", 1) + body[9:])  # 판정 6 (CRC 는 정상)
     with pytest.raises(DataCorrupted, match="not greater"):
         TableFile(path, USERS)
 
@@ -384,9 +427,9 @@ def test_non_increasing_id_is_corrupted(path):
 def test_deleted_flag_respected(path):
     with TableFile(path, USERS) as t:
         res = t.append_many([("a", 1), ("b", 2), ("c", 3)])
-    raw = bytearray(path.read_bytes())
-    raw[res[1][1] + 4] |= FLAG_DELETED  # flags 바이트는 length(4) 바로 뒤
-    path.write_bytes(bytes(raw))
+    off = res[1][1]
+    _, body = record_at(path.read_bytes(), off)
+    rewrite_record(path, off, bytes([body[0] | FLAG_DELETED]) + body[1:])  # flags 는 본문 첫 바이트
     with TableFile(path, USERS) as t:
         assert t.read_at(res[1][1]) is None
         assert t.read_at(res[0][1]) == (1, "a", 1)
@@ -517,3 +560,155 @@ def test_reads_do_not_mutate_instance(tf):
     assert _state(tf) == before
     assert (tf._writer, tf._reader) == handles
     assert handles[0] is tf._writer and handles[1] is tf._reader
+
+
+# ------------------------------------------------------------------ v2: CRC / 비파괴 복구
+
+from datetime import datetime  # noqa: E402
+
+import minidb.storage as storage_mod  # noqa: E402
+
+
+def three_records(path):
+    with TableFile(path, USERS) as t:
+        return t.append_many([("alpha", 1), ("beta", 2), ("gamma", 3)])
+
+
+def dir_listing(path):
+    return sorted(p.name for p in path.parent.iterdir())
+
+
+def quarantine_files(path):
+    return sorted(path.parent.glob(path.name + ".corrupt-*"))
+
+
+def test_mid_record_length_beyond_eof_is_corrupted(path):
+    res = three_records(path)
+    raw = bytearray(path.read_bytes())
+    off = res[1][1]
+    raw[off : off + 4] = struct.pack("<I", 10_000_000)  # 파일 끝을 넘는 length (header_crc 는 그대로)
+    path.write_bytes(bytes(raw))
+    before = path.read_bytes()
+    with pytest.raises(DataCorrupted, match="header checksum"):
+        TableFile(path, USERS)
+    assert path.read_bytes() == before  # 뒤의 정상 레코드를 자르지 않는다
+    assert quarantine_files(path) == []
+
+
+def test_mid_record_body_bitflip_is_corrupted(path):
+    res = three_records(path)
+    raw = bytearray(path.read_bytes())
+    raw[res[1][1] + RH + 10] ^= 0x01  # 본문 1바이트 반전
+    path.write_bytes(bytes(raw))
+    before = path.read_bytes()
+    with pytest.raises(DataCorrupted, match="body checksum"):
+        TableFile(path, USERS)
+    assert path.read_bytes() == before
+    assert quarantine_files(path) == []
+
+
+@pytest.mark.parametrize("keep", [5, RH + 4], ids=["header-partial", "body-partial"])
+def test_torn_last_record_is_quarantined(path, keep):
+    res = three_records(path)
+    raw = path.read_bytes()
+    last_off = res[2][1]
+    cut = raw[last_off : last_off + keep]
+    path.write_bytes(raw[: last_off + keep])
+
+    with pytest.warns(RuntimeWarning) as rec:
+        t = TableFile(path, USERS)
+    msg = str(rec[0].message)
+    qfiles = quarantine_files(path)
+    assert len(qfiles) == 1
+    assert qfiles[0].read_bytes() == cut  # 잘린 바이트와 정확히 일치
+    assert t.quarantine_path == qfiles[0]
+    assert f"offset {last_off}" in msg and f"{keep} trailing byte" in msg and str(qfiles[0]) in msg
+    with t:
+        assert path.stat().st_size == last_off
+        assert [r for _, r in t.scan()] == [(1, "alpha", 1), (2, "beta", 2)]
+        assert t.append(("new", 9)) == (3, last_off)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with TableFile(path, USERS) as t:
+            assert [r[0] for _, r in t.scan()] == [1, 2, 3]
+    assert len(quarantine_files(path)) == 1
+
+
+def test_zero_filled_last_body_is_torn_tail(path):
+    res = three_records(path)
+    raw = bytearray(path.read_bytes())
+    off = res[2][1]
+    size, body = record_at(raw, off)
+    raw[off + RH : off + size] = b"\x00" * len(body)  # length 는 유지, 본문만 0
+    path.write_bytes(bytes(raw))
+    with pytest.warns(RuntimeWarning, match="truncated"):
+        with TableFile(path, USERS) as t:
+            assert t.next_id == 3
+            assert t.size == off
+    assert quarantine_files(path)[0].read_bytes() == bytes(raw[off:])
+
+
+def test_readonly_torn_tail_never_modifies(path):
+    res = three_records(path)
+    raw = path.read_bytes()
+    path.write_bytes(raw[: res[2][1] + RH + 2])
+    before_bytes = path.read_bytes()
+    before_dir = dir_listing(path)
+    with pytest.warns(RuntimeWarning, match="readonly"):
+        with TableFile(path, USERS, readonly=True) as t:
+            assert t.size == res[2][1]
+            assert [r for _, r in t.scan()] == [(1, "alpha", 1), (2, "beta", 2)]
+    assert path.read_bytes() == before_bytes
+    assert dir_listing(path) == before_dir
+
+
+def test_version1_file_rejected(path):
+    TableFile(path, USERS).close()
+    raw = bytearray(path.read_bytes())
+    raw[4:6] = struct.pack("<H", 1)
+    path.write_bytes(bytes(raw))
+    with pytest.raises(DataCorrupted, match=r"unsupported storage format version 1 \(expected 2\)"):
+        TableFile(path, USERS)
+
+
+def test_bitflip_after_open_detected_on_read(path):
+    with TableFile(path, USERS) as t:
+        res = t.append_many([("alpha", 1), ("beta", 2), ("gamma", 3)])
+        off = res[1][1]
+        with open(path, "r+b") as other:  # 열린 뒤 디스크에서 비트가 바뀐 상황
+            other.seek(off + RH + 9 + 1 + 4)  # name 텍스트 첫 바이트
+            b = other.read(1)
+            other.seek(-1, 1)
+            other.write(bytes([b[0] ^ 0x20]))
+        with pytest.raises(DataCorrupted, match="body checksum"):
+            t.read_at(off)
+        assert t.read_at(res[0][1]) == (1, "alpha", 1)
+        with pytest.raises(DataCorrupted, match="body checksum"):
+            list(t.scan())
+
+
+def test_header_bitflip_after_open_detected_on_read(path):
+    with TableFile(path, USERS) as t:
+        res = t.append_many([("alpha", 1), ("beta", 2)])
+        with open(path, "r+b") as other:
+            other.seek(res[0][1])
+            other.write(b"\xff")
+        with pytest.raises(DataCorrupted):
+            t.read_at(res[0][1])
+        with pytest.raises(DataCorrupted, match="header checksum"):
+            list(t.scan())
+
+
+def test_quarantine_name_collision(path, monkeypatch):
+    fixed = datetime(2026, 11, 12, 9, 30, 15)
+    monkeypatch.setattr(storage_mod, "_now", lambda: fixed)
+    res = three_records(path)
+    base = path.name + ".corrupt-20261112T093015"
+    (path.parent / base).write_bytes(b"old")
+    (path.parent / (base + "-1")).write_bytes(b"old1")
+    path.write_bytes(path.read_bytes()[: res[2][1] + 3])
+    with pytest.warns(RuntimeWarning, match=base + "-2"):
+        TableFile(path, USERS).close()
+    assert (path.parent / base).read_bytes() == b"old"  # 기존 파일은 덮어쓰지 않는다
+    assert (path.parent / (base + "-1")).read_bytes() == b"old1"
+    assert (path.parent / (base + "-2")).stat().st_size == 3
