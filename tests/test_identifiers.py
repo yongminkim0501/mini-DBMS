@@ -48,29 +48,30 @@ def test_identifier_too_long():
     assert not identifier_too_long("😀" * 15)  # 60바이트
 
 
-def test_catalog_and_sql_use_same_rule(tmp_path):
-    """스키마 JSON 의 이름과 SQL 의 비인용 식별자가 같은 규칙으로 정규화되어 매칭된다."""
+def test_catalog_names_match_sql_identifiers(tmp_path):
+    """카탈로그는 JSON 의 이름을 그대로 쓰고, SQL 쪽 접기는 렉서만 한다. 둘을 이으면 PostgreSQL 과 같은 규칙이 된다."""
     (tmp_path / "schema").mkdir()
-    schema_json = {
-        "table": "Users회원",
-        "columns": [
-            {"name": "ID", "type": "BIGINT", "auto_increment": True},
-            {"name": "이름", "type": "TEXT"},
-            {"name": "Ägé", "type": "BIGINT"},
-        ],
-    }
-    (tmp_path / "schema" / "users회원.json").write_text(json.dumps(schema_json, ensure_ascii=False), encoding="utf-8")
+
+    def write(oid, name, *cols):
+        doc = {
+            "oid": oid,
+            "table": name,
+            "columns": [{"name": "id", "type": "BIGINT", "auto_increment": True}]
+            + [{"name": c, "type": "TEXT"} for c in cols],
+        }
+        (tmp_path / "schema" / f"{oid}.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+
+    write(1, "users회원", "이름", "Ägé")  # SQL 의 비인용 Users회원 → users회원 으로 찾는 테이블
+    write(2, "Users회원", "x")  # SQL 의 "Users회원" 으로만 찾는 테이블
     cat = Catalog(tmp_path)
 
     stmt = parse_statement("SELECT 이름, ÄGé FROM USERS회원 WHERE iD = 1")
     schema = cat.get(stmt.table.name)
-    assert schema.name == "users회원"
+    assert schema.oid == 1
     assert set(stmt.columns) <= set(schema.column_names)  # 'ÄGé' → 'Ägé' (Ä, é 는 그대로, G 만 접힘)
     assert stmt.where[0].column in schema.column_names
 
-    # 인용하면 접지 않으므로 다른 이름 → 없음 (PostgreSQL 과 동일)
-    quoted = parse_statement('SELECT * FROM "Users회원"')
+    assert cat.get(parse_statement('SELECT * FROM "Users회원"').table.name).oid == 2
+    assert cat.get(parse_statement('SELECT * FROM "users회원"').table.name).oid == 1
     with pytest.raises(UndefinedTable):
-        cat.get(quoted.table.name)
-    # 대소문자를 정확히 맞춰 인용하면 찾는다
-    assert cat.get(parse_statement('SELECT * FROM "users회원"').table.name) is schema
+        cat.get(parse_statement('SELECT * FROM "USERS회원"').table.name)

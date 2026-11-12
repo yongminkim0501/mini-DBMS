@@ -17,8 +17,9 @@ Krafton Jungle Week 12 DBMS 구현
 
 ```
 minidb/errors.py      SQLSTATE 예외 체계
-minidb/catalog.py     스키마 JSON 로딩/검증 (db/schema/<table>.json)
-minidb/storage.py     TableFile: 레코드 인코딩/디코딩, 파일 I/O (db/data/<table>.tbl)
+minidb/catalog.py     스키마 JSON 로딩/검증 (db/schema/*.json, 관례상 <oid>.json)
+minidb/storage.py     TableFile: 레코드 인코딩/디코딩, 파일 I/O (db/data/<oid>.tbl)
+minidb/identifiers.py 비인용 식별자 규칙 (ASCII 만 소문자로 접기)
 minidb/tools/dump.py  테이블 파일 덤프
 minidb/sql/           렉서, 문장 분리, AST, 재귀 하강 파서, psql 스타일 에러 출력
 scripts/bench_storage.py  저장 계층 벤치마크 → results/*.json

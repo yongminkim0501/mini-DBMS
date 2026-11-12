@@ -1,4 +1,5 @@
 {
+  "oid": 16384,
   "table": "users",
   "columns": [
     {"name": "id",   "type": "BIGINT", "auto_increment": true},

@@ -28,6 +28,7 @@ from minidb.storage import (
 
 USERS = parse_schema(
     {
+        "oid": 1,
         "table": "users",
         "columns": [
             {"name": "id", "type": "BIGINT", "auto_increment": True},
@@ -39,6 +40,7 @@ USERS = parse_schema(
 
 STRICT = parse_schema(
     {
+        "oid": 2,
         "table": "strict",
         "columns": [
             {"name": "id", "type": "BIGINT", "auto_increment": True},
@@ -52,6 +54,7 @@ STRICT = parse_schema(
 def wide_schema(n):
     return parse_schema(
         {
+            "oid": 3,
             "table": "wide",
             "columns": [{"name": "id", "type": "BIGINT", "auto_increment": True}]
             + [{"name": f"c{i}", "type": "BIGINT" if i % 2 else "TEXT"} for i in range(n)],

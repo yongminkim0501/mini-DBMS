@@ -30,6 +30,7 @@ from minidb.catalog import Catalog  # noqa: E402
 from minidb.storage import TableFile  # noqa: E402
 
 USERS_SCHEMA = {
+    "oid": 16384,
     "table": "users",
     "columns": [
         {"name": "id", "type": "BIGINT", "auto_increment": True},
@@ -100,7 +101,8 @@ def main() -> int:
 
     db = Path(args.db)
     (db / "schema").mkdir(parents=True, exist_ok=True)
-    (db / "schema" / "users.json").write_text(json.dumps(USERS_SCHEMA, indent=2), encoding="utf-8")
+    # 스키마 파일 이름은 의미가 없지만 관례대로 <oid>.json, 데이터 파일은 <db>/data/<oid>.tbl
+    (db / "schema" / f"{USERS_SCHEMA['oid']}.json").write_text(json.dumps(USERS_SCHEMA, indent=2), encoding="utf-8")
     catalog = Catalog(db)
     schema = catalog.get("users")
     data_path = catalog.data_path("users")

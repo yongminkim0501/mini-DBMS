@@ -69,10 +69,10 @@ while 루프가 되고, 선택 `[ RETURNING … ]` 은 "다음 토큰이 RETURNI
 | 정수 | `[0-9]+` → 파이썬 `int` (범위 검사는 바인더) |
 | 기호 | `( ) , ; * . = <> != < <= > >= -` |
 
-### 2.1 식별자 정규화 (렉서와 카탈로그 공통)
+### 2.1 식별자 정규화 (렉서만 접고, 카탈로그는 그대로 비교)
 
-식별자 규칙은 `minidb/identifiers.py` **한곳에만** 정의되어 있고, SQL 렉서와 스키마 카탈로그(`catalog.py`)가
-같은 함수를 쓴다.
+비인용 식별자 규칙은 `minidb/identifiers.py` **한곳에만** 정의되어 있다. 렉서, `to_sql()`, dump 도구의 테이블 인자가
+이 함수를 쓴다.
 
 - `is_valid_unquoted_identifier(name)`: 비인용 식별자 형태인가.
   정규식 `[A-Za-z_\u0080-\U0010FFFF][A-Za-z0-9_$\u0080-\U0010FFFF]*`.
@@ -82,13 +82,19 @@ while 루프가 되고, 선택 `[ RETURNING … ]` 은 "다음 토큰이 RETURNI
 
 예: `SELECT 이름, Age FROM Users회원` → 컬럼 `이름`, `age`, 테이블 `users회원`.
 
-**한곳에서 정의하는 이유**: 카탈로그는 스키마 JSON 의 `"table": "Users회원"` 을 정규화해 `users회원` 으로 저장하고,
-SQL 의 `FROM Users회원` 은 렉서가 정규화한다. 두 규칙이 조금이라도 다르면(예: 한쪽만 `str.lower()`) 같은 이름을
-서로 다르게 바꿔 "relation does not exist" 버그가 생긴다.
+**정규화는 렉서만 한다**: 카탈로그(스키마 JSON)의 테이블·컬럼 이름은 **적힌 그대로**가 이름이다. PostgreSQL 카탈로그도
+접힌 뒤의 이름을 그대로 저장한다. 접는 곳이 렉서 하나뿐이므로 "카탈로그와 렉서의 규칙이 어긋나 테이블을 못 찾는" 버그가
+생길 수 없다.
 
-`Catalog.get(name)` 은 **이미 정규화된 이름**(렉서가 만든 식별자 값)을 받고 다시 접지 않는다. 그래서 PostgreSQL 과
-같이 인용 식별자 `"Users회원"` 은 `users회원` 테이블과 다른 이름이고, `"users회원"` 처럼 정확히 인용하면 찾는다.
-스키마 파일 이름도 정규화된 이름이어야 한다(`db/schema/users회원.json`).
+| SQL | 렉서 결과 | 찾는 JSON 이름 |
+|---|---|---|
+| `FROM Users회원` | `users회원` | `"table": "users회원"` |
+| `FROM "Users회원"` | `Users회원` | `"table": "Users회원"` |
+| `FROM "users회원"` | `users회원` | `"table": "users회원"` |
+
+`Catalog.get(name)` 은 렉서가 만든 식별자 값을 받아 **정확히 일치**하는 이름만 찾는다. 그래서 `"Users"` 와 `users` 는
+다른 테이블이며 공존할 수 있다. 카탈로그는 이름으로 파일 시스템을 조회하지 않는다. 데이터 파일은 `oid` 번호로
+이름 붙인다(`docs/storage-format.md` §7 "이름과 파일의 분리").
 
 유니코드 정규화(NFC/NFD)는 하지 않는다(PostgreSQL 도 하지 않음). 같은 글자라도 조합 방식이 다르면 다른 이름이다.
 
