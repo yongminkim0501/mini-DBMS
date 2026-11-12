@@ -1,0 +1,10 @@
+{
+  "oid": 16386,
+  "table": "회원",
+  "columns": [
+    {"name": "id",   "type": "BIGINT", "auto_increment": true},
+    {"name": "이름", "type": "TEXT",   "nullable": false},
+    {"name": "나이", "type": "BIGINT", "nullable": true},
+    {"name": "메모", "type": "TEXT",   "nullable": true}
+  ]
+}

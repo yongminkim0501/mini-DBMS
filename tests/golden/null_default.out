@@ -1,0 +1,33 @@
+INSERT 0 3
+INSERT 0 1
+INSERT 0 1
+ id |    name    | age 
+----+------------+-----
+  6 | id-default |    
+(1 row)
+
+INSERT 0 1
+ id |    name    | age 
+----+------------+-----
+  1 |            |    
+  2 | x          |    
+  3 |            |   9
+  4 |            |    
+  5 | only-name  |    
+  6 | id-default |    
+(6 rows)
+
+ id | name | age 
+----+------+-----
+(0 rows)
+
+ id | name | age 
+----+------+-----
+(0 rows)
+
+ id 
+----
+  3
+(1 row)
+
+[exit 0]

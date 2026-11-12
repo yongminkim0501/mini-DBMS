@@ -1,0 +1,81 @@
+INSERT 0 5
+ id | name 
+----+------
+  2 | lee
+  4 | choi
+(2 rows)
+
+ id | name 
+----+------
+  1 | kim
+  5 | jung
+(2 rows)
+
+ id | name 
+----+------
+  1 | kim
+  5 | jung
+(2 rows)
+
+ id | name 
+----+------
+  1 | kim
+(1 row)
+
+ id | name 
+----+------
+  1 | kim
+  2 | lee
+  4 | choi
+(3 rows)
+
+ id | name 
+----+------
+  5 | jung
+(1 row)
+
+ id | name 
+----+------
+  2 | lee
+  4 | choi
+  5 | jung
+(3 rows)
+
+ id | name 
+----+------
+  5 | jung
+(1 row)
+
+ id | name 
+----+------
+  1 | kim
+  4 | choi
+(2 rows)
+
+ id | name 
+----+------
+  4 | choi
+  5 | jung
+(2 rows)
+
+ id | name 
+----+------
+  2 | lee
+  4 | choi
+(2 rows)
+
+ id 
+----
+  1
+  2
+(2 rows)
+
+ id 
+----
+  1
+  2
+  4
+  5
+(4 rows)
+
+[exit 0]
