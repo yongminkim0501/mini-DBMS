@@ -134,6 +134,7 @@ class Database:
     # ------------------------------------------------------------ 수명
     def flush(self, *, durable: bool = False) -> None:
         """열린 모든 TableFile 을 flush 한다 (``durable`` 이면 fsync)."""
+        # [LOCK:write] Phase 3: 테이블마다 배타 락 (쓰기 핸들 사용).
         for tf in self._tables.values():
             tf.flush(durable=durable)
 
@@ -144,6 +145,7 @@ class Database:
 
     def close(self) -> None:
         """모든 TableFile 을 닫는다. 여러 번 불러도 안전."""
+        # [LOCK] Phase 3: 엔진 배타 락 (실행 중인 문장이 없을 때만 닫는다).
         if not self._closed:
             self._close_tables()
             self._closed = True
