@@ -47,7 +47,7 @@ def test_error_position_formats_with_file_line(chunk):
     with pytest.raises(Exception) as ei:
         parse_statement(st.source)
     out = format_error(st.context, ei.value, position_offset=st.context_offset, line_offset=st.line - 1)
-    assert out.splitlines()[1] == "LINE 5:   y FORM t"
+    assert out.splitlines()[1] == "LINE 5:   y FORM t;"
     assert out.splitlines()[2].index("^") == len("LINE 5:   y ")
 
 

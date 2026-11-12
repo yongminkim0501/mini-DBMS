@@ -69,11 +69,13 @@ def resolve_table_arg(arg: str) -> str:
     return fold_identifier(arg)
 
 
-def dump(table: str, db_dir: str, *, limit: int | None = None, out: TextIO = sys.stdout) -> int:
+def dump(table: str, db_dir: str, *, limit: int | None = None, out: TextIO | None = None) -> int:
     """``table`` 의 헤더와 레코드를 ``out`` 에 출력하고 검사한 레코드 위치 수를 반환한다.
 
     ``table`` 은 명령줄 인자 형태 그대로 받는다 (:func:`resolve_table_arg` 참고).
     """
+    if out is None:
+        out = sys.stdout  # 기본 인자로 두면 import 시점의 sys.stdout 에 고정되므로 호출 시점에 읽는다
     catalog = Catalog(db_dir)
     schema = catalog.get(resolve_table_arg(table))
     path = catalog.data_path(schema.name)

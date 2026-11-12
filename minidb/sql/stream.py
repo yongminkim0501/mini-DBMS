@@ -36,18 +36,20 @@ class ScriptStatement:
         source: 문장 (start_offset, 토큰, 오류 위치 모두 파일 전체 기준).
         line: 문장이 시작하는 줄 번호 (1부터, 파일 전체 기준).
         line_prefix: 문장이 시작하는 줄에서 문장 앞에 있는 텍스트.
-            ``line_prefix + source.text`` 를 :func:`~minidb.sql.errorfmt.format_error` 에 넘기면
-            ``LINE n:`` 에 그 줄 전체가 보인다.
+        line_suffix: 문장이 끝나는 줄에서 문장 뒤에 있는 텍스트 (``;`` 등, 버퍼에 있는 만큼).
+            :attr:`context` 를 :func:`~minidb.sql.errorfmt.format_error` 에 넘기면 psql 처럼 ``LINE n:`` 에
+            그 줄 전체가 보인다.
     """
 
     source: StatementSource
     line: int
     line_prefix: str
+    line_suffix: str = ""
 
     @property
     def context(self) -> str:
-        """오류 출력용 텍스트 (문장이 시작하는 줄의 처음부터 문장 끝까지)."""
-        return self.line_prefix + self.source.text
+        """오류 출력용 텍스트 (문장이 시작하는 줄의 처음부터 문장이 끝나는 줄의 끝까지)."""
+        return self.line_prefix + self.source.text + self.line_suffix
 
     @property
     def context_offset(self) -> int:
@@ -107,7 +109,9 @@ def iter_script_statements(reader: TextIO, *, chunk_size: int = _DEFAULT_CHUNK) 
             scan_lines += nl
             scan_pos = start
             src = StatementSource(buf[start:end], buf_start + start, None, toks)
-            yield ScriptStatement(src, scan_lines + 1, head)
+            nl_end = buf.find("\n", end)
+            tail = buf[end:] if nl_end == -1 else buf[end:nl_end]
+            yield ScriptStatement(src, scan_lines + 1, head, tail.rstrip("\r"))
 
         if error is not None:
             start = (cur[0].offset - buf_start) if cur else max(0, (error.position or 1) - 1 - buf_start)
