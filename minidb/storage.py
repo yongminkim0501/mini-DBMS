@@ -85,12 +85,20 @@ class TableFile:
 
     - :meth:`append` / :meth:`append_many` 로 레코드를 파일 끝에 추가하고 ``(id, offset)`` 을 돌려준다.
     - :meth:`read_at` 은 offset 으로 레코드 하나를, :meth:`scan` 은 전체 레코드를 순서대로 읽는다.
-    - 쓰기는 버퍼링되지만 읽기 전에 내부적으로 flush 하므로 read-your-writes 가 보장된다.
+    - 쓰기는 한 번의 append 호출 안에서 버퍼링되고, 반환 직전에 OS 로 내보낸다(fsync 아님).
+
+    불변식 (Phase 3 의 RW 락 설계가 여기에 의존한다):
+
+    (a) append 계열 메서드(:meth:`append`, :meth:`append_many`)가 반환된 시점에
+        ``_end`` 이전의 모든 바이트는 OS 에 전달되어 있다. 따라서 같은 프로세스의 어떤
+        파일 핸들(다른 TableFile 인스턴스 포함)도 그 레코드를 읽을 수 있다(read-your-writes).
+    (b) :meth:`read_at` / :meth:`scan` / :meth:`records` 는 인스턴스의 어떤 속성도
+        변경하지 않는다. 읽기끼리는 공유(read) 락만으로 병렬 실행할 수 있다.
 
     **스레드 안전하지 않다.** 이번 단계에서는 한 인스턴스를 한 스레드에서만 사용해야 한다.
     GIL 의 암묵적 원자성에도 기대지 않으며(3.14t 에서는 GIL 이 없다), Phase 3 에서
     메서드 단위 락을 추가할 예정이다. 공유 가변 상태는 모두 인스턴스 속성에 있고,
-    락으로 보호해야 할 지점은 ``# [LOCK]`` 주석으로 표시했다.
+    락 지점은 ``# [LOCK:read]`` (공유 락) / ``# [LOCK:write]`` (배타 락) 주석으로 표시했다.
 
     Args:
         path: 데이터 파일 경로. 없거나 0바이트면 헤더를 써서 새로 만든다.
@@ -128,7 +136,6 @@ class TableFile:
 
         self._writer: BinaryIO | None = None
         self._reader: BinaryIO | None = None
-        self._dirty: bool = False
         self._closed: bool = True
 
         self._open_or_create()
@@ -232,13 +239,6 @@ class TableFile:
         self._check_open()
         if self._writer is None:
             raise ValueError("TableFile was opened readonly")
-
-    def _sync_reads(self) -> None:
-        """read-your-writes: 버퍼에 남은 쓰기를 OS 로 내보내 읽기 핸들이 볼 수 있게 한다."""
-        # [LOCK] 읽기가 쓰기 버퍼를 건드리는 유일한 지점: append 와 상호 배제 필요.
-        if self._dirty and self._writer is not None:
-            self._writer.flush()
-            self._dirty = False
 
     # -------------------------------------------------------------- encoding
     def _encode(self, values: Any, rid: int) -> bytes:
@@ -362,7 +362,7 @@ class TableFile:
         """
         self._check_writable()
         assert self._writer is not None
-        # [LOCK] 여기서부터 끝까지가 임계 구역: _next_id 읽기 → id 할당 → write → _end/_next_id 갱신.
+        # [LOCK:write] 여기서부터 끝까지가 임계 구역: _next_id 읽기 → id 할당 → write → _end/_next_id 갱신.
         # GIL 이 있어도 이 일련의 과정은 원자적이지 않다.
         next_id = self._next_id
         offset = self._end
@@ -384,12 +384,14 @@ class TableFile:
         data = encoded[0] if len(encoded) == 1 else b"".join(encoded)
         try:
             self._writer.write(data)
+            # 불변식 (a): 반환 전에 배치 전체를 한 번에 OS 로 내보낸다 (fsync 는 하지 않음).
+            # 덕분에 읽기 메서드는 쓰기 버퍼를 건드릴 필요가 없다 → 불변식 (b).
+            self._writer.flush()
         except BaseException:
             # 디스크 부족 등으로 일부만 쓰였을 수 있다: 상태를 갱신하지 않고 핸들을 닫아
             # 이후 사용을 막는다. 다시 열면 꼬리 복구가 반쯤 쓰인 레코드를 잘라낸다.
             self._abort()
             raise
-        self._dirty = True
         self._end = offset
         self._next_id = next_id
         return result
@@ -405,11 +407,10 @@ class TableFile:
         self._check_open()
         if type(offset) is not int:
             raise ValueError(f"offset must be an int, got {type(offset).__name__}")
-        # [LOCK] _end/_next_id 스냅샷 (읽기 락). 아래 pread 자체는 위치 공유가 없어 병렬 가능.
+        # [LOCK:read] _end/_next_id 스냅샷. 아래 pread 는 파일 위치를 공유하지 않아 병렬 가능.
         end = self._end
         if not HEADER_SIZE <= offset < end:
             raise ValueError(f"offset {offset} out of range [{HEADER_SIZE}, {end})")
-        self._sync_reads()
 
         assert self._reader is not None
         fd = self._reader.fileno()
@@ -436,8 +437,7 @@ class TableFile:
         순회 도중 read_at/append 를 호출해도 순회 위치가 깨지지 않는다.
         """
         self._check_open()
-        self._sync_reads()
-        # [LOCK] _end 스냅샷: append 와 일관된 값을 얻으려면 읽기 락 아래에서 읽는다.
+        # [LOCK:read] _end 스냅샷. 이후 순회는 전용 fd 만 쓰고 인스턴스 상태를 건드리지 않는다.
         end = self._end
         return self._records_gen(end)
 
@@ -481,9 +481,8 @@ class TableFile:
         self._check_open()
         if self._writer is None:
             return
-        # [LOCK] flush: 쓰기 핸들/_dirty 접근 (쓰기 락).
+        # [LOCK:write] 쓰기 핸들 사용. append 가 이미 flush 하므로 보통은 fsync 용도.
         self._writer.flush()
-        self._dirty = False
         if durable:
             os.fsync(self._writer.fileno())
 
@@ -493,7 +492,7 @@ class TableFile:
             return
         try:
             if self._writer is not None:
-                # [LOCK] close: 쓰기 핸들 사용 + 닫힘 상태 전이 (쓰기 락).
+                # [LOCK:write] 쓰기 핸들 사용 + 닫힘 상태 전이.
                 self._writer.flush()
         finally:
             self._abort()

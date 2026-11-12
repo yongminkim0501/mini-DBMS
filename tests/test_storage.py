@@ -168,7 +168,7 @@ def test_reopen_preserves_data_and_next_id(path):
 
 def test_read_your_writes_without_flush(tf, path):
     _, off = tf.append(("fresh", 1))
-    # 아직 flush 하지 않았으므로 디스크에는 헤더만 있을 수도 있다
+    # 명시적 flush 없이도 append 직후 읽힌다
     assert tf.read_at(off) == (1, "fresh", 1)
     _, off2 = tf.append(("fresh2", 2))
     assert list(tf.scan()) == [(off, (1, "fresh", 1)), (off2, (2, "fresh2", 2))]
@@ -450,3 +450,70 @@ def test_sequence_limit(tf, path):
     assert ei.value.sqlstate == "2200H"
     assert tf.size == size
     assert tf.next_id == BIGINT_MAX + 1
+
+
+# ------------------------------------------------------------------ 읽기 순수성 (불변식 a, b)
+
+
+class _FlushSpy:
+    """쓰기 핸들을 감싸 flush 호출 횟수를 센다 (C 구현 객체라 메서드를 직접 바꿀 수 없음)."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.flush_calls = 0
+
+    def flush(self):
+        self.flush_calls += 1
+        return self._inner.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def test_append_visible_to_other_instance_without_flush(tf, path):
+    # 불변식 (a): append 반환 시점에 바이트가 OS 에 전달되어 있다.
+    rid, off = tf.append(("visible", 1))
+    res = tf.append_many([("b1", 2), ("b2", 3)])
+    with TableFile(path, USERS, readonly=True) as other:
+        assert other.read_at(off) == (rid, "visible", 1)
+        assert [r for _, r in other.scan()] == [(1, "visible", 1), (2, "b1", 2), (3, "b2", 3)]
+        assert other.next_id == tf.next_id
+    assert res[-1][1] < tf.size == path.stat().st_size
+
+
+def test_append_many_flushes_once_per_batch(tf, monkeypatch):
+    spy = _FlushSpy(tf._writer)
+    monkeypatch.setattr(tf, "_writer", spy)
+    tf.append_many([(f"r{i}", i) for i in range(100)])
+    assert spy.flush_calls == 1
+    tf.append(("one", 1))
+    assert spy.flush_calls == 2
+
+
+def test_reads_never_flush(tf, monkeypatch):
+    res = tf.append_many([("a", 1), ("b", 2)])
+    spy = _FlushSpy(tf._writer)
+    monkeypatch.setattr(tf, "_writer", spy)
+    tf.read_at(res[0][1])
+    list(tf.scan())
+    list(tf.records())
+    assert spy.flush_calls == 0
+
+
+def _state(t):
+    return {k: v for k, v in vars(t).items() if k not in ("_writer", "_reader")}
+
+
+def test_reads_do_not_mutate_instance(tf):
+    res = tf.append_many([("a", 1), (None, None), ("c", 3)])
+    before = _state(tf)
+    handles = (tf._writer, tf._reader)
+    for _, off in res:
+        tf.read_at(off)
+    assert list(tf.scan())
+    assert list(tf.records())
+    with pytest.raises(ValueError):
+        tf.read_at(tf.size)
+    assert _state(tf) == before
+    assert (tf._writer, tf._reader) == handles
+    assert handles[0] is tf._writer and handles[1] is tf._reader
