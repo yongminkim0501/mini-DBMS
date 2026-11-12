@@ -18,6 +18,8 @@ __all__ = [
     "UndefinedTable",
     "InvalidSchemaDefinition",
     "InvalidParameterValue",
+    "SequenceGeneratorLimitExceeded",
+    "CharacterNotInRepertoire",
 ]
 
 
@@ -88,3 +90,15 @@ class InvalidParameterValue(DatabaseError):
     """값 개수 불일치 등 잘못된 인자 (22023)."""
 
     default_sqlstate = "22023"
+
+
+class SequenceGeneratorLimitExceeded(DatabaseError):
+    """id 시퀀스가 BIGINT 최댓값에 도달해 더 부여할 수 없음 (2200H)."""
+
+    default_sqlstate = "2200H"
+
+
+class CharacterNotInRepertoire(DatabaseError):
+    """UTF-8 로 인코딩할 수 없는 문자열 (짝 없는 서로게이트 등) (22021)."""
+
+    default_sqlstate = "22021"

@@ -1,0 +1,60 @@
+name: test
+
+on:
+  push:
+    branches: ["**"]
+  # base 브랜치 제한 없음: 쌓아 올린 PR(base 가 main 이 아닌 PR)에서도 CI 가 돈다.
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    name: pytest (${{ matrix.python }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.14+gil", "3.14t"]
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Run pytest
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run --python "${{ matrix.python }}" pytest -ra | tee pytest.log
+
+      - name: Verify interpreter build from pytest header
+        shell: bash
+        run: |
+          header=$(grep -m1 '^minidb: python' pytest.log || true)
+          if [ -z "$header" ]; then
+            echo "::error::pytest 헤더(minidb: python ...)를 찾을 수 없음"; exit 1
+          fi
+          echo "$header"
+          case "${{ matrix.python }}" in
+            3.14t)
+              # free-threaded 빌드여야 하고, GIL 이 다시 켜져 있으면 안 된다
+              # (free-threading 미지원 C 확장을 import 하면 GIL 이 재활성화될 수 있음)
+              if ! grep -q 'free-threaded build=True' <<<"$header"; then
+                echo "::error::3.14t 인데 free-threaded 빌드가 아님"; exit 1
+              fi
+              if grep -q 'GIL enabled=True' <<<"$header"; then
+                echo "::error::3.14t 인데 GIL enabled=True"; exit 1
+              fi
+              ;;
+            3.14+gil)
+              if grep -q 'free-threaded build=True' <<<"$header"; then
+                echo "::error::3.14+gil 인데 free-threaded build=True"; exit 1
+              fi
+              ;;
+          esac

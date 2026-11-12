@@ -1,11 +1,14 @@
 # mini-DBMS
+
+[![test](https://github.com/yongminkim0501/mini-DBMS/actions/workflows/test.yml/badge.svg)](https://github.com/yongminkim0501/mini-DBMS/actions/workflows/test.yml)
+
 Krafton Jungle Week 12 DBMS 구현
 
 파이썬(표준 라이브러리만)으로 만드는 파일 기반 미니 DBMS. PostgreSQL 문법 부분집합 / SQLSTATE 호환을 목표로 한다.
 
 | Phase | 내용 | 상태 |
 |---|---|---|
-| 0 | 저장 계층(TableFile), 스키마 카탈로그, SQLSTATE 에러 체계 | ✅ |
+| 0 | 저장 계층(TableFile, 포맷 v2: 레코드 CRC + quarantine 복구), 스키마 카탈로그, SQLSTATE 에러 체계 | ✅ |
 | 1 | SQL 처리기 (INSERT/SELECT, CLI) | |
 | 2 | id 기반 메모리 B+ 트리 인덱스 | |
 | 3 | 스레드 풀 API 서버 (PostgreSQL wire protocol) | |
