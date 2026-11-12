@@ -1,0 +1,32 @@
+{
+  "benchmark": "parser",
+  "timestamp": "2026-11-12T11:19:10+00:00",
+  "environment": {
+    "python_version": "3.14.6",
+    "free_threaded_build": false,
+    "gil_enabled": true,
+    "cpu_count": 10,
+    "platform": "macOS-15.1-arm64-arm-64bit-Mach-O"
+  },
+  "params": {
+    "rows_per_insert": 10000,
+    "inserts": 100,
+    "selects": 100000,
+    "seed": 42
+  },
+  "results": {
+    "single_insert_chars": 186678,
+    "single_insert_tokens": 60009,
+    "single_insert_lex_seconds": 0.07239,
+    "single_insert_parse_seconds": 0.03562,
+    "script_rows": 1000000,
+    "script_split_seconds": 9.745,
+    "script_parse_seconds": 4.8964,
+    "script_total_seconds": 14.6414,
+    "script_rows_per_sec": 68299.6,
+    "script_streaming_seconds": 11.7466,
+    "select_count": 100000,
+    "select_total_seconds": 2.2824,
+    "select_avg_us": 22.824
+  }
+}
