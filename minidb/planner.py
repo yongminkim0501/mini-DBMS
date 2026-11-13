@@ -16,9 +16,18 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from .binder import BoundCondition, BoundInsert, BoundSelect
+from .binder import BoundCondition, BoundInsert, BoundSelect, statement_has_params
 from .catalog import TableSchema
-from .executor import Filter, IndexScan, Insert, Limit, PlanNode, Project, SeqScan, ValuesScan
+from .executor import (
+    Filter,
+    IndexScan,
+    Insert,
+    Limit,
+    PlanNode,
+    Project,
+    SeqScan,
+    ValuesScan,
+)
 from .session import Session
 from .storage import BIGINT_MAX, BIGINT_MIN
 from .table import TableHandle
@@ -118,7 +127,8 @@ def choose_access_path(bound: BoundSelect, handle: TableHandle, session: Session
        - 점 (``id = c``) → 점 검색 Index Scan
        - 그 외 → 범위 Index Scan (empty 면 Index Scan 이지만 실행 시 아무것도 읽지 않는다)
     """
-    seq = SeqScan(handle, bound.table)
+    cancel = session.cancel if session is not None else None
+    seq = SeqScan(handle, bound.table, cancel=cancel)
     if session is not None and not session.enable_indexscan:
         return seq
     if any(c.value is None for c in bound.where):
@@ -127,14 +137,15 @@ def choose_access_path(bound: BoundSelect, handle: TableHandle, session: Session
     if rng is None or rng.unbounded:
         return seq
     if rng.empty:
-        return IndexScan(handle, bound.table, index_conds=used, empty=True)
+        return IndexScan(handle, bound.table, index_conds=used, empty=True, cancel=cancel)
     point = rng.point
     if point is not None:
-        return IndexScan(handle, bound.table, index_conds=used, point=point)
+        return IndexScan(handle, bound.table, index_conds=used, point=point, cancel=cancel)
     return IndexScan(
         handle,
         bound.table,
         index_conds=used,
+        cancel=cancel,
         lo=rng.lo,
         lo_inclusive=rng.lo_inclusive,
         hi=rng.hi,
@@ -143,7 +154,11 @@ def choose_access_path(bound: BoundSelect, handle: TableHandle, session: Session
 
 
 def plan_select(bound: BoundSelect, tables: TableProvider, session: Session | None = None) -> PlanNode:
-    """``[Limit] → Project → [Filter] → 접근 경로`` 계획을 만든다."""
+    """``[Limit] → Project → [Filter] → 접근 경로`` 계획을 만든다.
+
+    ``bound`` 는 값이 채워진 문장이어야 한다 (준비된 문장의 틀이면 먼저 :func:`~minidb.binder.bind_values`).
+    """
+    assert not statement_has_params(bound), "plan_select needs a bound statement with parameter values"
     node: PlanNode = choose_access_path(bound, tables(bound.table), session)
     if bound.where:
         node = Filter(node, bound.where)
@@ -153,6 +168,8 @@ def plan_select(bound: BoundSelect, tables: TableProvider, session: Session | No
     return node
 
 
-def plan_insert(bound: BoundInsert, tables: TableProvider) -> Insert:
+def plan_insert(bound: BoundInsert, tables: TableProvider, session: Session | None = None) -> Insert:
     """``Insert → ValuesScan`` 계획을 만든다."""
-    return Insert(ValuesScan(bound.rows), tables(bound.table), bound.table, bound.returning)
+    assert not bound.param_slots, "plan_insert needs a bound statement with parameter values"
+    cancel = session.cancel if session is not None else None
+    return Insert(ValuesScan(bound.rows), tables(bound.table), bound.table, bound.returning, cancel=cancel)
