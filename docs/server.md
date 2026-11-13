@@ -31,6 +31,13 @@ flowchart LR
 | API | `minidb/server/api.py` | 엔드포인트, `/query` 실행과 JSON 변환, HTTP 세션 |
 | 서버 | `minidb/server/server.py` | 조립, 시작, 신호 처리, 정상 종료 |
 | 엔진 | `minidb/engine.py`, `minidb/table.py`, `minidb/concurrency.py` | 스레드 안전한 Database, 테이블별 RWLock, 스냅샷 읽기 |
+| PG 프로토콜 | `minidb/pgwire/` | PostgreSQL wire protocol 리스너 (docs/pg-protocol.md) |
+
+**리스너 여러 개**: 디스패처 하나가 HTTP 리스너와 PostgreSQL 프로토콜 리스너(`--pg-port`)를 함께 감시한다
+(`Dispatcher.add_listener`). 두 프로토콜의 연결은 같은 selector, 같은 워커 풀, 같은 최대 연결 수, 같은 엔진을 쓴다.
+차이는 워커에 넘기는 시점이다: HTTP 연결은 읽을 데이터가 생기면 바로 넘기고 워커가 요청을 읽는 반면,
+PG 연결은 프로토콜 처리기(`ConnectionProtocol.on_readable`)가 디스패처 스레드에서 데이터를 읽어 **완전한 메시지가 생겼을 때만**
+넘긴다. 그래서 반쯤 도착한 PG 메시지는 워커를 붙잡지 않고, 취소 요청(CancelRequest)은 워커 없이 디스패처에서 바로 처리된다.
 
 ## 2. 요청 생명주기
 
