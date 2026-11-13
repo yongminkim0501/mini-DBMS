@@ -73,7 +73,10 @@ _FLAGS_ID = struct.Struct("<Bq")  # flags u8 + id i64 (본문 앞 9바이트)
 assert _HEADER.size == HEADER_SIZE
 assert _REC_HDR.size == RECORD_HEADER_SIZE
 
-_SCAN_CHUNK = 1 << 20  # 순차 읽기 청크 크기 (1 MiB)
+_SCAN_CHUNK = 1 << 20  # 순차 읽기 청크 최대 크기 (1 MiB)
+_SCAN_FIRST_CHUNK = 8 << 10  # 첫 청크 (8 KiB). 읽을 때마다 두 배로 늘려 _SCAN_CHUNK 까지.
+# 짧은 범위 스캔(scan_from 으로 몇 행만 읽고 멈추는 경우)이 1 MiB 를 통째로 읽지 않게 한다.
+# 전체 스캔에서는 처음 몇 번만 작게 읽으므로(8K→…→1M, 8번) 비용 차이가 없다.
 _WRITE_BUFFER = 1 << 18  # 쓰기 버퍼 크기 (256 KiB)
 _PREAD_GUESS = 256  # read_at 에서 한 번에 읽어볼 바이트 수
 
@@ -836,6 +839,7 @@ def _iter_raw(
     unpack_hdr = _REC_HDR.unpack_from
     crc = _crc32
     min_len = max(min_body, 9)  # 어떤 경우에도 flags + id 는 있어야 한다
+    chunk_size = _SCAN_FIRST_CHUNK
     while True:
         avail = len(buf) - bpos
         need = RECORD_HEADER_SIZE
@@ -860,7 +864,8 @@ def _iter_raw(
         left = end - read_pos
         if left <= 0:
             return
-        chunk = f.read(min(max(_SCAN_CHUNK, need - avail), left))
+        chunk = f.read(min(max(chunk_size, need - avail), left))
+        chunk_size = min(chunk_size * 2, _SCAN_CHUNK)
         if not chunk:
             return
         read_pos += len(chunk)
