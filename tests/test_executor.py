@@ -8,7 +8,7 @@ from minidb.errors import ProgramLimitExceeded
 from minidb.executor import Filter, Limit, Project, SeqScan, explain_lines
 from minidb.planner import choose_access_path, plan_insert, plan_select
 from minidb.sql.parser import parse_statement
-from minidb.storage import TableFile
+from minidb.table import TableHandle
 
 ROWS = [
     ("kim", 25),
@@ -34,11 +34,11 @@ def env(tmp_path):
     }
     (tmp_path / "schema" / "1.json").write_text(json.dumps(users), encoding="utf-8")
     cat = Catalog(tmp_path)
-    files: dict[int, TableFile] = {}
+    files: dict[int, TableHandle] = {}
 
     def tables(schema):
         if schema.oid not in files:
-            files[schema.oid] = TableFile(cat.data_path(schema.name), schema, max_text_bytes=100)
+            files[schema.oid] = TableHandle.open(cat.data_path(schema.name), schema, max_text_bytes=100)
         return files[schema.oid]
 
     tables(cat.get("users")).append_many(ROWS)
@@ -137,7 +137,8 @@ def test_limit_stops_scan_early(tmp_path):
     (tmp_path / "schema" / "9.json").write_text(json.dumps(doc))
     cat = Catalog(tmp_path)
     schema = cat.get("big")
-    with TableFile(cat.data_path("big"), schema) as tf:
+    tf = TableHandle.open(cat.data_path("big"), schema)
+    try:
         tf.append_many([(i % 10,) for i in range(20_000)])
 
         def tables(_s):
@@ -159,6 +160,8 @@ def test_limit_stops_scan_early(tmp_path):
         for _ in range(5):
             next(it)
         assert plan.child.rows_scanned == 5
+    finally:
+        tf.close()
 
 
 def test_plan_shape(env):
@@ -171,10 +174,10 @@ def test_plan_shape(env):
     assert isinstance(plan, Project) and plan.identity
 
 
-def test_choose_access_path_is_seqscan_in_phase1(env):
+def test_choose_access_path_without_id_condition_is_seqscan(env):
     cat, tables = env
-    bound = bind(parse_statement("SELECT * FROM users WHERE id = 1"), cat)
-    assert isinstance(choose_access_path(bound, tables), SeqScan)
+    bound = bind(parse_statement("SELECT * FROM users WHERE age = 1"), cat)
+    assert isinstance(choose_access_path(bound, tables(bound.table)), SeqScan)
 
 
 # ------------------------------------------------------------------ INSERT
@@ -191,7 +194,7 @@ def test_insert_returning(env):
 
 def test_multi_row_insert_is_atomic(env):
     cat, tables = env
-    tf = tables(cat.get("users"))
+    tf = tables(cat.get("users")).file
     size, next_id = tf.size, tf.next_id
     # 바인딩은 통과하지만 저장 계층 검증(max_text_bytes=100)에서 세 번째 행이 실패
     sql = "INSERT INTO users (name) VALUES ('ok1'), ('ok2'), ('" + "x" * 101 + "')"
