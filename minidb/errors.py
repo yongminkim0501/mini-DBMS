@@ -36,7 +36,24 @@ __all__ = [
     "TooManyConnections",
     "InsufficientResources",
     "QueryCanceled",
+    "ProtocolViolation",
+    "UndefinedParameter",
+    "IndeterminateDatatype",
+    "DuplicatePreparedStatement",
+    "DuplicateCursor",
+    "InvalidSqlStatementName",
+    "InvalidCursorName",
+    "InvalidAuthorizationSpecification",
+    "InvalidCatalogName",
+    "InvalidBinaryRepresentation",
+    "AmbiguousParameter",
+    "CantChangeRuntimeParam",
+    "AdminShutdown",
+    "SEVERITIES",
 ]
+
+#: ErrorResponse 의 S/V 필드에 쓸 수 있는 심각도. FATAL 은 오류를 보낸 뒤 연결을 끊는다.
+SEVERITIES: frozenset[str] = frozenset({"ERROR", "FATAL"})
 
 
 class DatabaseError(Exception):
@@ -49,6 +66,7 @@ class DatabaseError(Exception):
             SQL 텍스트와 관계없는 오류(저장 계층 등)는 None.
         detail: 부가 설명 (ErrorResponse 의 D 필드). psql 은 "DETAIL:  ..." 로 출력한다.
         hint: 해결 힌트 (ErrorResponse 의 H 필드). psql 은 "HINT:  ..." 로 출력한다.
+        severity: ``ERROR`` 또는 ``FATAL`` (ErrorResponse 의 S/V 필드).
     """
 
     #: 하위 클래스가 덮어쓰는 기본 SQLSTATE (XX000 = internal_error)
@@ -62,17 +80,26 @@ class DatabaseError(Exception):
         position: int | None = None,
         detail: str | None = None,
         hint: str | None = None,
+        severity: str | None = None,
     ) -> None:
-        """메시지와 (선택적으로) SQLSTATE, SQL 원문 위치, DETAIL, HINT 를 지정해 예외를 만든다."""
+        """메시지와 (선택적으로) SQLSTATE, SQL 원문 위치, DETAIL, HINT, 심각도를 지정해 예외를 만든다."""
         super().__init__(message)
         self.message: str = message
         self.sqlstate: str = sqlstate if sqlstate is not None else self.default_sqlstate
         self.position: int | None = position
         self.detail: str | None = detail
         self.hint: str | None = hint
+        sev = severity if severity is not None else self.default_severity
+        if sev not in SEVERITIES:
+            raise ValueError(f"invalid severity {sev!r}")
+        #: ``ERROR`` (문장만 실패) 또는 ``FATAL`` (연결 종료). wire protocol 의 S/V 필드.
+        self.severity: str = sev
+
+    #: 하위 클래스가 덮어쓰는 기본 심각도
+    default_severity: str = "ERROR"
 
     def __str__(self) -> str:
-        return f"ERROR:  {self.message} (SQLSTATE {self.sqlstate})"
+        return f"{self.severity}:  {self.message} (SQLSTATE {self.sqlstate})"
 
 
 class DatatypeMismatch(DatabaseError):
@@ -229,3 +256,82 @@ class QueryCanceled(DatabaseError):
     """문장 취소 (57014). 서버 종료 등으로 처리하지 못한 요청."""
 
     default_sqlstate = "57014"
+
+
+class ProtocolViolation(DatabaseError):
+    """프로토콜 위반 (08P01). 예: Bind 의 파라미터 개수 불일치, 잘못된 메시지 길이."""
+
+    default_sqlstate = "08P01"
+
+
+class UndefinedParameter(DatabaseError):
+    """존재하지 않는 파라미터 (42P02). 예: 단순 쿼리의 ``$1``: ``there is no parameter $1``."""
+
+    default_sqlstate = "42P02"
+
+
+class IndeterminateDatatype(DatabaseError):
+    """파라미터 타입을 정할 수 없음 (42P18). 예: ``could not determine data type of parameter $1``."""
+
+    default_sqlstate = "42P18"
+
+
+class DuplicatePreparedStatement(DatabaseError):
+    """같은 이름의 준비된 문장이 이미 있음 (42P05)."""
+
+    default_sqlstate = "42P05"
+
+
+class DuplicateCursor(DatabaseError):
+    """같은 이름의 포털(커서)이 이미 있음 (42P03)."""
+
+    default_sqlstate = "42P03"
+
+
+class InvalidSqlStatementName(DatabaseError):
+    """존재하지 않는 준비된 문장 (26000)."""
+
+    default_sqlstate = "26000"
+
+
+class InvalidCursorName(DatabaseError):
+    """존재하지 않는 포털 (34000)."""
+
+    default_sqlstate = "34000"
+
+
+class InvalidAuthorizationSpecification(DatabaseError):
+    """인증 정보 오류 (28000). 예: 시작 패킷에 user 가 없음."""
+
+    default_sqlstate = "28000"
+
+
+class InvalidCatalogName(DatabaseError):
+    """존재하지 않는 데이터베이스 (3D000)."""
+
+    default_sqlstate = "3D000"
+
+
+class InvalidBinaryRepresentation(DatabaseError):
+    """바이너리 형식 값의 길이/내용이 잘못됨 (22P03)."""
+
+    default_sqlstate = "22P03"
+
+
+class AmbiguousParameter(DatabaseError):
+    """같은 파라미터가 서로 다른 타입으로 추론됨 (42P08). 예: ``inconsistent types deduced for parameter $1``."""
+
+    default_sqlstate = "42P08"
+
+
+class CantChangeRuntimeParam(DatabaseError):
+    """읽기 전용 설정을 바꾸려 함 (55P02). 예: ``parameter "server_version" cannot be changed``."""
+
+    default_sqlstate = "55P02"
+
+
+class AdminShutdown(DatabaseError):
+    """서버 종료로 연결을 끊음 (57P01). 항상 FATAL."""
+
+    default_sqlstate = "57P01"
+    default_severity = "FATAL"
