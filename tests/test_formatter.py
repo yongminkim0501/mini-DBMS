@@ -77,7 +77,7 @@ def test_multiline_values():
         " name | id ",
         "------+----",
         " a   +|  1",
-        " bb   |   ",
+        " bb   | ",  # 끝난 마지막 칸은 채우지 않는다 (실제 psql 17 출력으로 확인)
         "(1 row)",
     ]
     assert format_table([ID, NAME], [(1, "x\ny")]) == [
@@ -102,3 +102,9 @@ def test_explain_like_single_text_column():
 
 def test_format_cell():
     assert format_cell(None) == "" and format_cell(-5) == "-5" and format_cell("x") == "x"
+
+
+def test_multiline_cell_with_exhausted_last_numeric_column():
+    # psql 과 같은 출력 (실제 psql 로 확인): 이어지는 줄에서 끝난 마지막 숫자 칸은 채우지 않는다
+    lines = format_table([NAME, AGE], [("a\nbb", 2), ("c", None)])
+    assert lines == [" name | age ", "------+-----", " a   +|   2", " bb   | ", " c    |    ", "(2 rows)"]

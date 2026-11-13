@@ -15,6 +15,7 @@ class TokenType(Enum):
     IDENT = "IDENT"  # 식별자 (value 는 정규화된 이름: 비인용은 소문자, 인용은 원문 그대로)
     STRING = "STRING"  # '...' 문자열 (value 는 이스케이프를 푼 str)
     INTEGER = "INTEGER"  # 정수 (value 는 int)
+    PARAM = "PARAM"  # 파라미터 $n (value 는 번호 int, 1 이상)
     LPAREN = "("
     RPAREN = ")"
     COMMA = ","
@@ -47,7 +48,7 @@ class Token(NamedTuple):
 
     Attributes:
         type: 토큰 종류.
-        value: 정규화된 값 (KEYWORD 는 대문자 str, IDENT 는 이름, STRING 은 str, INTEGER 는 int, 기호는 기호 문자열).
+        value: 정규화된 값 (KEYWORD 는 대문자 str, IDENT 는 이름, STRING 은 str, INTEGER/PARAM 은 int, 기호는 기호 문자열).
         offset: 원문 기준 시작 위치 (0부터).
         end: 원문 기준 끝 위치 (exclusive). ``text[offset:end]`` 가 토큰의 원문.
         line: 줄 번호 (1부터).

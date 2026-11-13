@@ -125,7 +125,11 @@ def test_column_counts_characters_not_bytes():
         ("x = 1.5", FeatureNotSupported, "0A000", "numeric literals are not supported", 5),
         ("x = 1e3", FeatureNotSupported, "0A000", "numeric literals are not supported", 5),
         ("x = .5", FeatureNotSupported, "0A000", "numeric literals are not supported", 5),
-        ("x = $1", FeatureNotSupported, "0A000", "parameters ($1) are not supported", 5),
+        ("x = $0", SqlSyntaxError, "42601", 'syntax error at or near "$0"', 5),
+        ("x = $01", SqlSyntaxError, "42601", 'syntax error at or near "$01"', 5),
+        ("x = $65536", SqlSyntaxError, "42601", 'syntax error at or near "$65536"', 5),
+        ("x = $1abc", SqlSyntaxError, "42601", 'trailing junk after parameter at or near "$1abc"', 5),
+        ("x = $", SqlSyntaxError, "42601", 'syntax error at or near "$"', 5),
         ("x = E'a\\n'", FeatureNotSupported, "0A000", "E'...' string literals are not supported", 5),
         ("x = $$a$$", FeatureNotSupported, "0A000", "dollar-quoted strings are not supported", 5),
     ],
@@ -135,6 +139,15 @@ def test_lex_errors(sql, exc, code, message, position):
     assert err.sqlstate == code
     assert err.message == message
     assert err.position == position
+
+
+def test_params():
+    toks = tokenize("id = $1 AND x < $12")
+    params = [(t.value, t.offset) for t in toks if t.type is T.PARAM]
+    assert params == [(1, 5), (12, 16)]
+    assert [t.type for t in tokenize("$65535")][0] is T.PARAM
+    # $tag$ 는 여전히 dollar quote (미지원), 문자열 안의 $1 은 파라미터가 아니다
+    assert [t.type for t in tokenize("'$1'")][:1] == [T.STRING]
 
 
 def test_error_position_is_character_based():

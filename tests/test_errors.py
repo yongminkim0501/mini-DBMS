@@ -54,3 +54,35 @@ def test_detail_hint_optional():
     e = E.GeneratedAlways("m", detail="d", hint="h")
     assert (e.detail, e.hint) == ("d", "h")
     assert E.DatabaseError("x").detail is None and E.DatabaseError("x").hint is None
+
+
+@pytest.mark.parametrize(
+    ("cls", "code"),
+    [
+        (E.ProtocolViolation, "08P01"),
+        (E.UndefinedParameter, "42P02"),
+        (E.IndeterminateDatatype, "42P18"),
+        (E.DuplicatePreparedStatement, "42P05"),
+        (E.InvalidSqlStatementName, "26000"),
+        (E.InvalidCursorName, "34000"),
+        (E.InvalidAuthorizationSpecification, "28000"),
+        (E.InvalidCatalogName, "3D000"),
+        (E.DuplicateCursor, "42P03"),
+        (E.InvalidBinaryRepresentation, "22P03"),
+        (E.AmbiguousParameter, "42P08"),
+        (E.CantChangeRuntimeParam, "55P02"),
+    ],
+)
+def test_protocol_sqlstates(cls, code):
+    assert cls("x").sqlstate == code
+    assert cls("x").severity == "ERROR"
+
+
+def test_severity():
+    assert E.DatabaseError("x").severity == "ERROR"
+    fatal = E.InvalidCatalogName('database "x" does not exist', severity="FATAL")
+    assert fatal.severity == "FATAL"
+    assert str(fatal) == 'FATAL:  database "x" does not exist (SQLSTATE 3D000)'
+    assert E.AdminShutdown("bye").severity == "FATAL"  # 기본이 FATAL
+    with pytest.raises(ValueError):
+        E.DatabaseError("x", severity="PANIC")

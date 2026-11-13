@@ -17,8 +17,14 @@
 그래서 연결별 상태(수신 버퍼 등)에는 락이 필요 없다. 넘겨줄 때 큐(내부 락)가 메모리 가시성을 보장한다.
 여러 스레드가 함께 쓰는 것은 열린 연결 수와 종료 플래그뿐이고, ``self._lock`` 으로 보호한다.
 
+리스닝 소켓을 여러 개 맡을 수 있다: 생성자의 HTTP 리스너(없어도 됨)와 :meth:`Dispatcher.add_listener` 로 붙인
+다른 프로토콜(PostgreSQL wire protocol, :mod:`minidb.pgwire.service`)의 리스너. 같은 selector, 같은 워커 풀,
+같은 최대 연결 수를 함께 쓴다. HTTP 연결은 읽을 데이터가 생기면 바로 워커에 넘기고(워커가 요청을 읽는다),
+다른 프로토콜 연결은 :class:`ConnectionProtocol` 의 ``on_readable`` 이 dispatcher 스레드에서 데이터를 읽어
+"완전한 메시지가 있을 때만" 워커에 넘긴다.
+
 한계:
-- 최대 연결 수: 넘으면 accept 직후 503 (SQLSTATE 53300) 응답 후 닫는다.
+- 최대 연결 수: 넘으면 accept 직후 503 (SQLSTATE 53300) 응답 후 닫는다 (다른 프로토콜은 그 프로토콜의 오류 형식).
 - 유휴 연결 타임아웃: dispatcher 가 주기적으로(최대 1초 간격) 오래 논 연결을 닫는다.
 - 요청 수신 타임아웃: 워커가 요청 하나를 다 받을 때까지의 시간 제한 (느린 클라이언트 방어). 넘으면 408 후 닫는다.
 - 헤더 16 KiB(431), 본문 10 MiB(413) 는 파서가 검사한다.
@@ -35,11 +41,16 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any, Protocol
 
 from .http import MAX_BODY_BYTES, MAX_HEADER_BYTES, HttpError, Request, build_response, parse_request
 from .pool import WorkerPool
 
-__all__ = ["Connection", "Dispatcher", "Response", "error_body"]
+__all__ = ["Connection", "ConnectionProtocol", "Dispatcher", "Response", "error_body", "DISPATCH", "WAIT"]
+
+#: ConnectionProtocol.on_readable 의 반환값: 완전한 요청이 있으니 워커에 넘긴다 / 더 기다린다
+DISPATCH = "dispatch"
+WAIT = "wait"
 
 _RECV = 64 * 1024
 _LINGER_SECONDS = 2.0  # 오류 응답 후 상대가 보내던 데이터를 버리며 기다리는 최대 시간
@@ -69,18 +80,23 @@ def error_body(status: int, message: str, sqlstate: str | None = None) -> bytes:
 
 
 class Connection:
-    """클라이언트 연결 하나. 한 순간에 한 스레드만 만진다 (모듈 docstring 의 소유권 규칙)."""
+    """클라이언트 연결 하나. 한 순간에 한 스레드만 만진다 (모듈 docstring 의 소유권 규칙).
 
-    __slots__ = ("sock", "addr", "id", "buf", "last_active", "requests")
+    ``proto`` 가 None 이면 HTTP, 아니면 그 프로토콜 처리기. ``state`` 는 프로토콜별 연결 상태.
+    """
+
+    __slots__ = ("sock", "addr", "id", "buf", "last_active", "requests", "proto", "state")
     _ids = itertools.count(1)  # itertools.count 의 next() 는 C 수준에서 원자적이지만, dispatcher 스레드만 부른다
 
-    def __init__(self, sock: socket.socket, addr: tuple) -> None:
+    def __init__(self, sock: socket.socket, addr: tuple, proto: ConnectionProtocol | None = None) -> None:
         self.sock = sock
         self.addr = addr
         self.id = next(Connection._ids)
         self.buf = bytearray()
         self.last_active = time.monotonic()
         self.requests = 0
+        self.proto = proto
+        self.state: Any = None
 
     @property
     def peer(self) -> str:
@@ -91,11 +107,34 @@ class Connection:
         return f"{host}:{port}"
 
 
+class ConnectionProtocol(Protocol):
+    """HTTP 이외의 프로토콜 처리기가 구현하는 것 (PostgreSQL wire protocol: :class:`minidb.pgwire.service.PgService`).
+
+    dispatcher 스레드에서 불리는 것: ``new_connection``, ``too_many_connections``, ``on_readable``, ``busy``,
+    ``idle_limit``, ``goodbye``. 워커에서 불리는 것: ``serve``. ``connection_closed`` 는 연결을 닫는 스레드에서 한 번.
+    """
+
+    def new_connection(self, conn: Connection) -> None: ...
+    def too_many_connections(self, conn: Connection) -> bytes: ...
+    def on_readable(self, conn: Connection) -> str | tuple[str, bytes]: ...
+    def serve(self, conn: Connection, dispatcher: Dispatcher) -> None: ...
+    def busy(self, conn: Connection) -> tuple[bool, bytes]: ...
+    def idle_limit(self, conn: Connection) -> float | None: ...
+    def goodbye(self, conn: Connection) -> bytes: ...
+    def connection_closed(self, conn: Connection) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _Listen:
+    sock: socket.socket
+    proto: ConnectionProtocol | None  # None = HTTP
+
+
 class Dispatcher:
-    """리스닝 소켓 하나를 맡는 디스패처. :meth:`run` 은 호출한 스레드에서 돈다.
+    """리스닝 소켓(들)을 맡는 디스패처. :meth:`run` 은 호출한 스레드에서 돈다.
 
     Args:
-        listener: bind/listen 이 끝난 소켓.
+        listener: bind/listen 이 끝난 HTTP 소켓 (None 이면 HTTP 없이 :meth:`add_listener` 로 붙인 것만).
         pool: 요청을 처리할 워커 풀.
         handler: ``Request -> Response``. 워커 스레드에서 불린다.
         access_log: 요청마다 한 줄 기록 함수 (None 이면 기록 안 함).
@@ -103,7 +142,7 @@ class Dispatcher:
 
     def __init__(
         self,
-        listener: socket.socket,
+        listener: socket.socket | None,
         pool: WorkerPool,
         handler: Callable[[Request], Response],
         *,
@@ -117,6 +156,7 @@ class Dispatcher:
         log: Callable[[str], None] | None = None,
     ) -> None:
         self.listener = listener
+        self._listeners: list[_Listen] = [_Listen(listener, None)] if listener is not None else []
         self.pool = pool
         self.handler = handler
         self.max_connections = max_connections
@@ -146,6 +186,10 @@ class Dispatcher:
         self._rejected_busy = 0
         self._timeouts = 0
         self.stopped = threading.Event()
+
+    def add_listener(self, sock: socket.socket, proto: ConnectionProtocol) -> None:
+        """다른 프로토콜의 리스닝 소켓을 붙인다 (:meth:`run` 전에)."""
+        self._listeners.append(_Listen(sock, proto))
 
     # ------------------------------------------------------------ 상태
     @property
@@ -184,6 +228,25 @@ class Dispatcher:
             pass
         with self._lock:
             self._open -= 1
+        if conn.proto is not None:
+            conn.proto.connection_closed(conn)
+
+    def close_connection(self, conn: Connection, final: bytes = b"") -> None:
+        """프로토콜 처리기(워커)가 연결을 끝낼 때. ``final`` 이 있으면 보내고 lingering close."""
+        if final:
+            self._send_and_close(conn, final)
+        else:
+            self._close(conn)
+
+    def _close_for_shutdown(self, conn: Connection) -> None:
+        """서버 종료로 연결을 닫는다. 다른 프로토콜이면 그 프로토콜의 작별 메시지(예: FATAL 57P01)를 먼저 보낸다."""
+        if conn.proto is not None:
+            try:
+                conn.sock.settimeout(0.5)
+                conn.sock.sendall(conn.proto.goodbye(conn))
+            except OSError:
+                pass
+        self._close(conn)
 
     def _send_and_close(self, conn: Connection, resp: bytes) -> None:
         """오류 응답을 보내고 닫는다 (lingering close).
@@ -238,7 +301,7 @@ class Dispatcher:
     def give_back(self, conn: Connection) -> None:
         """워커가 keep-alive 연결을 dispatcher 에 돌려준다 (워커 스레드에서 호출)."""
         if self.stopping:
-            self._close(conn)
+            self._close_for_shutdown(conn)
             return
         self._returned.put(("idle", conn))
         self._wake()
@@ -247,8 +310,9 @@ class Dispatcher:
     def run(self) -> None:
         sel = self._sel
         self._loop_thread = threading.get_ident()
-        self.listener.setblocking(False)
-        sel.register(self.listener, selectors.EVENT_READ, "listen")
+        for lst in self._listeners:
+            lst.sock.setblocking(False)
+            sel.register(lst.sock, selectors.EVENT_READ, lst)
         sel.register(self._wake_r, selectors.EVENT_READ, "wake")
         tick = max(0.05, min(0.5, self.idle_timeout / 2))
         last_sweep = time.monotonic()
@@ -256,8 +320,8 @@ class Dispatcher:
             while not self.stopping:
                 for key, _ in sel.select(timeout=tick):
                     data = key.data
-                    if data == "listen":
-                        self._accept()
+                    if isinstance(data, _Listen):
+                        self._accept(data)
                     elif data == "wake":
                         self._drain_wake()
                     elif isinstance(data, tuple):
@@ -266,7 +330,10 @@ class Dispatcher:
                         conn: Connection = data
                         sel.unregister(conn.sock)
                         del self._idle[conn.id]
-                        self._dispatch(conn)
+                        if conn.proto is None:
+                            self._dispatch(conn)
+                        else:
+                            self._proto_readable(conn)
                 self._take_returned()
                 now = time.monotonic()
                 if now - last_sweep >= tick:
@@ -275,10 +342,10 @@ class Dispatcher:
         finally:
             self._shutdown_loop()
 
-    def _accept(self) -> None:
+    def _accept(self, lst: _Listen) -> None:
         while True:
             try:
-                sock, addr = self.listener.accept()
+                sock, addr = lst.sock.accept()
             except (BlockingIOError, InterruptedError):
                 return
             except OSError as exc:
@@ -289,14 +356,19 @@ class Dispatcher:
                 sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             except OSError:
                 pass
-            conn = Connection(sock, addr)
+            conn = Connection(sock, addr, lst.proto)
             with self._lock:
                 self._open += 1
                 self._accepted_total += 1
                 over = self._open > self.max_connections
                 if over:
                     self._rejected_connections += 1
-            if over:
+            if lst.proto is not None:
+                lst.proto.new_connection(conn)
+                if over:
+                    self._send_and_close(conn, lst.proto.too_many_connections(conn))
+                    continue
+            elif over:
                 body = error_body(503, "sorry, too many clients already", "53300")
                 self._send_and_close(conn, build_response(503, body, keep_alive=False))
                 continue
@@ -320,8 +392,15 @@ class Dispatcher:
             else:
                 self._register(conn)
 
+    def _idle_limit(self, conn: Connection) -> float | None:
+        return self.idle_timeout if conn.proto is None else conn.proto.idle_limit(conn)
+
     def _sweep_idle(self, now: float) -> None:
-        expired = [c for c in self._idle.values() if now - c.last_active > self.idle_timeout]
+        expired = []
+        for c in self._idle.values():
+            limit = self._idle_limit(c)
+            if limit is not None and now - c.last_active > limit:
+                expired.append(c)
         for conn in expired:
             self._sel.unregister(conn.sock)
             del self._idle[conn.id]
@@ -344,6 +423,43 @@ class Dispatcher:
             resp = build_response(503, body, keep_alive=False, headers={"Retry-After": str(self.retry_after)})
             self._send_and_close(conn, resp)
 
+    def _proto_readable(self, conn: Connection) -> None:
+        """다른 프로토콜 연결에 데이터가 왔다 (dispatcher 스레드): 처리기가 읽고, 완전한 메시지가 있으면 워커로."""
+        proto = conn.proto
+        assert proto is not None
+        try:
+            action = proto.on_readable(conn)
+        except Exception as exc:  # noqa: BLE001 - 처리기 버그가 dispatcher 를 죽이지 않게
+            self.log(f"protocol on_readable failed: {exc!r}")
+            self._close(conn)
+            return
+        if action == WAIT:
+            self._register(conn)
+            return
+        if action != DISPATCH:
+            _, final = action
+            self.close_connection(conn, final)
+            return
+
+        def fail(exc: BaseException) -> None:
+            self._close_for_shutdown(conn)
+
+        if self.pool.try_submit(lambda: proto.serve(conn, self), on_error=fail):
+            return
+        with self._lock:
+            self._rejected_busy += 1
+        keep, data = proto.busy(conn)  # 큐가 가득 참: 프로토콜 형식의 53000 오류 (연결 유지 여부는 처리기가 정한다)
+        if not keep:
+            self.close_connection(conn, data)
+            return
+        try:
+            conn.sock.settimeout(1.0)
+            conn.sock.sendall(data)
+        except OSError:
+            self._close(conn)
+            return
+        self._register(conn)
+
     def _shutdown_loop(self) -> None:
         """루프가 끝나면: 리스닝 중단, 유휴 연결 닫기. 처리 중인 연결은 워커가 응답 후 닫는다(give_back 이 닫음)."""
         with self._lock:
@@ -353,24 +469,25 @@ class Dispatcher:
                 self._sel.unregister(conn.sock)
             except (KeyError, ValueError):
                 pass
-            self._close(conn)
+            self._close_for_shutdown(conn)
         self._idle.clear()
         for conn, _ in list(self._linger.values()):
             self._linger_drop(conn)
         while True:  # 루프가 끝나기 직전에 반환된 연결
             try:
-                self._close(self._returned.get_nowait()[1])
+                self._close_for_shutdown(self._returned.get_nowait()[1])
             except queue.Empty:
                 break
-        for s in (self.listener, self._wake_r):
+        for s in [lst.sock for lst in self._listeners] + [self._wake_r]:
             try:
                 self._sel.unregister(s)
             except (KeyError, ValueError):
                 pass
-        try:
-            self.listener.close()
-        except OSError:
-            pass
+        for lst in self._listeners:
+            try:
+                lst.sock.close()
+            except OSError:
+                pass
         self._sel.close()
         self.stopped.set()
 

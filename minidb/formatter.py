@@ -14,6 +14,7 @@
 - NULL 은 빈칸.
 - 폭은 화면 표시 폭으로 계산한다. 한글 등 전각 문자는 2칸 (errorfmt 와 같은 :func:`display_width`).
 - 값 안의 줄바꿈은 psql 처럼 여러 줄로 나누고, 이어지는 줄이 있는 칸 끝에 ``+`` 를 표시한다.
+  다른 칸의 이어지는 줄에서 이미 끝난 마지막 칸은 (숫자 칸이라도) 공백으로 채우지 않는다.
 - 마지막 줄은 ``(1 row)`` / ``(N rows)``.
 """
 
@@ -77,7 +78,9 @@ def format_table(columns: Sequence[ColumnInfo], rows: Iterable[Sequence[Any]]) -
                 text = lines[li] if li < len(lines) else ""
                 more = li < len(lines) - 1  # 이 칸에 다음 줄이 있으면 '+' 표시
                 pad = widths[j] - display_width(text)
-                if numeric[j]:
+                if li >= len(lines) and j == last:
+                    cell = ""  # 이미 끝난 마지막 칸은 정렬과 관계없이 채우지 않는다 (psql 의 finalspaces 규칙)
+                elif numeric[j]:
                     cell = " " * pad + text
                 elif j < last or more:
                     cell = text + " " * pad

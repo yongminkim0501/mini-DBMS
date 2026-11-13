@@ -17,6 +17,7 @@ PostgreSQL 과 같은 방식)을 잰다. 계측이 꺼진 일반 실행에서는
 from __future__ import annotations
 
 import operator
+import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
@@ -24,11 +25,14 @@ from typing import Any
 
 from .binder import BoundCondition
 from .catalog import BIGINT, TableSchema
-from .sql.ast import quote_ident, quote_literal
+from .errors import QueryCanceled
+from .sql.ast import Param, quote_ident, quote_literal
 from .storage import TableFile
 from .table import TableHandle
 
 __all__ = [
+    "CANCEL_CHECK_INTERVAL",
+    "check_cancel",
     "NodeStats",
     "PlanNode",
     "SeqScan",
@@ -50,6 +54,17 @@ _OPS: dict[str, Callable[[Any, Any], bool]] = {
     ">": operator.gt,
     ">=": operator.ge,
 }
+
+
+#: 스캔 루프가 취소 플래그를 확인하는 간격 (행 수, 2의 거듭제곱). 확인 비용(Event.is_set)을 행마다 내지 않으려고.
+CANCEL_CHECK_INTERVAL = 1024
+_CANCEL_MASK = CANCEL_CHECK_INTERVAL - 1
+
+
+def check_cancel(cancel: threading.Event | None) -> None:
+    """취소가 요청되었으면 57014. (wire protocol 의 CancelRequest 가 디스패처 스레드에서 플래그를 켠다.)"""
+    if cancel is not None and cancel.is_set():
+        raise QueryCanceled("canceling statement due to user request")
 
 
 @dataclass(slots=True)
@@ -117,10 +132,11 @@ class SeqScan(PlanNode):
     그 offset 이전만 락 없이 읽는다. 스캔 도중 커밋된 INSERT 는 보이지 않는다 (문장 단위 일관성).
     """
 
-    def __init__(self, handle: TableHandle, schema: TableSchema) -> None:
+    def __init__(self, handle: TableHandle, schema: TableSchema, *, cancel: threading.Event | None = None) -> None:
         super().__init__()
         self.handle = handle
         self.schema = schema
+        self.cancel = cancel
         #: 실제로 저장 계층에서 읽어 올린 행 수 (LIMIT 조기 종료 검증, Rows Removed by Filter 계산용)
         self.rows_scanned = 0
 
@@ -129,11 +145,21 @@ class SeqScan(PlanNode):
         return self.handle.file
 
     def _rows(self) -> Iterator[tuple[Any, ...]]:
+        cancel = self.cancel
+        check_cancel(cancel)
         end = self.handle.snapshot_end()  # [LOCK:read] 짧게
         scan = self.handle.file.scan(end)
         try:
+            if cancel is None:
+                for _offset, row in scan:
+                    self.rows_scanned += 1
+                    yield row
+                return
+            mask = _CANCEL_MASK
             for _offset, row in scan:
-                self.rows_scanned += 1
+                n = self.rows_scanned = self.rows_scanned + 1
+                if not n & mask and cancel.is_set():  # CANCEL_CHECK_INTERVAL 행마다 확인
+                    check_cancel(cancel)
                 yield row
         finally:
             scan.close()  # type: ignore[attr-defined]
@@ -168,8 +194,10 @@ class IndexScan(PlanNode):
         hi: int | None = None,
         hi_inclusive: bool = True,
         empty: bool = False,
+        cancel: threading.Event | None = None,
     ) -> None:
         super().__init__()
+        self.cancel = cancel
         self.handle = handle
         self.schema = schema
         self.index_name = handle.index_name
@@ -183,6 +211,7 @@ class IndexScan(PlanNode):
     def _rows(self) -> Iterator[tuple[Any, ...]]:
         if self.empty:
             return
+        check_cancel(self.cancel)
         # 스냅샷 읽기: 트리 조회와 파일 끝 기록만 공유 락 안에서(짧게), 레코드 읽기는 락 밖에서.
         if self.point is not None:
             offset, end = self.handle.point_lookup(self.point)  # [LOCK:read]
@@ -198,13 +227,16 @@ class IndexScan(PlanNode):
             return
         hi = self.hi
         hi_inc = self.hi_inclusive
+        cancel = self.cancel
         rows = self.handle.file.scan_from(start, end)
         try:
             for _offset, row in rows:
                 rid = row[0]
                 if hi is not None and (rid > hi or (rid == hi and not hi_inc)):
                     return  # id 가 상한을 넘었다: 이후 레코드는 모두 더 크다
-                self.rows_fetched += 1
+                n = self.rows_fetched = self.rows_fetched + 1
+                if cancel is not None and not n & _CANCEL_MASK:
+                    check_cancel(cancel)
                 yield row
         finally:
             rows.close()  # type: ignore[attr-defined]
@@ -332,9 +364,16 @@ class Insert(PlanNode):
     """
 
     def __init__(
-        self, child: PlanNode, handle: TableHandle, schema: TableSchema, returning: Sequence[int] | None
+        self,
+        child: PlanNode,
+        handle: TableHandle,
+        schema: TableSchema,
+        returning: Sequence[int] | None,
+        *,
+        cancel: threading.Event | None = None,
     ) -> None:
         super().__init__()
+        self.cancel = cancel
         self.child = child
         self.children = (child,)
         self.handle = handle
@@ -344,6 +383,9 @@ class Insert(PlanNode):
 
     def _rows(self) -> Iterator[tuple[Any, ...]]:
         rows = list(self.child)
+        # 취소는 락 구간에 들어가기 **전에만** 확인한다. 배타 락 안(파일 append + 인덱스 갱신)은 중간에 끊지 않고,
+        # 쓰기가 끝난 INSERT 는 완료된 문장으로 본다 (반쯤 쓰인 상태 금지, docs/pg-protocol.md "쿼리 취소").
+        check_cancel(self.cancel)
         # [LOCK:write] 테이블 배타 락: 파일 append 와 인덱스 갱신이 한 구간 (TableHandle.append_many 안에서).
         placed = self.handle.append_many(rows)
         self.inserted = len(placed)
@@ -360,6 +402,8 @@ class Insert(PlanNode):
 
 def _format_value(cond: BoundCondition) -> str:
     """EXPLAIN 에 표시할 비교 값. PostgreSQL 처럼 타입이 확정된 상수에 ``::type`` 을 붙인다."""
+    if isinstance(cond.source, Param):
+        return cond.source.to_sql()  # 준비된 문장: PostgreSQL 의 generic plan 처럼 $n 으로 표시
     src = cond.source.value
     type_name = "bigint" if cond.column_type == BIGINT else "text"
     if src is None:

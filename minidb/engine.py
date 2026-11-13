@@ -26,29 +26,75 @@ Database 의 기본 세션(:attr:`Database.session`)을 쓴다. **세션은 스�
 
 from __future__ import annotations
 
+import itertools
 import threading
 import time
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 from typing import Self
 
-from .binder import BoundExplain, BoundInsert, BoundSelect, BoundSet, BoundShow, BoundStatement, bind
+from .binder import (
+    BoundExplain,
+    BoundInsert,
+    BoundSelect,
+    BoundSet,
+    BoundShow,
+    BoundStatement,
+    ParamContext,
+    bind,
+    bind_values,
+)
 from .catalog import Catalog, TableSchema
-from .errors import DatabaseError
+from .errors import DatabaseError, SqlSyntaxError
 from .executor import PlanNode, explain_lines
 from .index import DEFAULT_ORDER
 from .planner import plan_insert, plan_select
 from .result import ColumnInfo, QueryResult
-from .session import Session
+from .session import SETTINGS, Session
+from .sql.ast import Statement
 from .sql.lexer import StatementSource, iter_statements
 from .sql.parser import parse_statement
 from .storage import TableFile
 from .table import TableHandle
 
-__all__ = ["Database"]
+__all__ = ["Database", "PreparedStatement", "result_columns"]
 
 _EXPLAIN_COLUMNS = [ColumnInfo("QUERY PLAN", "text", 25)]
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedStatement:
+    """준비된 문장 (wire protocol 의 Parse 결과). 불변이라 여러 번 실행해도 안전하다.
+
+    Attributes:
+        sql: 원문 (오류 위치의 기준).
+        statement: 파싱 결과. 빈 쿼리면 None (Execute 하면 EmptyQueryResponse).
+        bound: 바인딩 틀 (``$n`` 자리는 ParamRef). 빈 쿼리면 None.
+        param_types: 파라미터 타입 OID (``$1`` 부터, ParameterDescription).
+        columns: 결과 컬럼 (RowDescription). 결과 행이 없는 문장이면 None (NoData).
+    """
+
+    sql: str
+    statement: Statement | None
+    bound: BoundStatement | None
+    param_types: tuple[int, ...]
+    columns: list[ColumnInfo] | None
+
+
+def result_columns(bound: BoundStatement) -> list[ColumnInfo] | None:
+    """문장을 실행하지 않고 결과 컬럼을 알아낸다 (Describe). 결과 행이 없는 문장이면 None."""
+    if isinstance(bound, BoundSelect):
+        return list(bound.column_infos)
+    if isinstance(bound, BoundInsert):
+        return list(bound.returning_infos) if bound.returning is not None else None
+    if isinstance(bound, BoundExplain):
+        return list(_EXPLAIN_COLUMNS)
+    if isinstance(bound, BoundShow):
+        d = SETTINGS.get(bound.name.lower())
+        return [ColumnInfo(d.name if d is not None else bound.name, "text", 25)]
+    return None
 
 
 class Database:
@@ -145,13 +191,46 @@ class Database:
         bound = bind(stmt, self.catalog)
         return self.execute_bound(bound, session)
 
+    def prepare(self, sql: str, param_types: Sequence[int] = ()) -> PreparedStatement:
+        """문장 하나를 파싱·바인딩해 재사용할 수 있는 :class:`PreparedStatement` 를 만든다 (wire protocol 의 Parse).
+
+        ``param_types`` 는 ``$1`` 부터의 타입 OID (0 이면 추론). 카탈로그는 읽기 전용이므로 바인딩 결과를 계속 써도 된다.
+
+        Raises:
+            SqlSyntaxError: 문장이 둘 이상 (``cannot insert multiple commands into a prepared statement``) 또는 구문 오류.
+            IndeterminateDatatype, AmbiguousParameter: 파라미터 타입을 정할 수 없음.
+            DatabaseError: 그 밖의 파싱·바인딩 오류 (position 은 ``sql`` 기준).
+        """
+        sources = list(itertools.islice(iter_statements(sql), 2))
+        if len(sources) > 1:
+            raise SqlSyntaxError("cannot insert multiple commands into a prepared statement")
+        ctx = ParamContext(param_types)
+        if not sources:
+            return PreparedStatement(sql, None, None, ctx.resolve(), None)
+        stmt = parse_statement(sources[0])
+        bound = bind(stmt, self.catalog, ctx)
+        return PreparedStatement(sql, stmt, bound, ctx.resolve(), result_columns(bound))
+
+    def execute_prepared(
+        self, prepared: PreparedStatement, values: Sequence[int | str | None] = (), session: Session | None = None
+    ) -> QueryResult:
+        """준비된 문장을 파라미터 값으로 실행한다 (파싱·바인딩 없이 값만 채운다).
+
+        ``values`` 는 파라미터 타입에 맞게 해석된 값 (BIGINT 계열 int, 문자열 계열 str, NULL None).
+        """
+        if prepared.bound is None:
+            raise ValueError("empty prepared statement has nothing to execute")
+        if len(values) != len(prepared.param_types):
+            raise ValueError(f"expected {len(prepared.param_types)} parameter values, got {len(values)}")
+        return self.execute_bound(bind_values(prepared.bound, values), session)
+
     def execute_bound(self, bound: BoundStatement, session: Session | None = None) -> QueryResult:
         """바인딩된 문장을 계획·실행한다 (벤치마크가 단계별 시간을 잴 때 직접 부른다)."""
         sess = self.session if session is None else session
         if isinstance(bound, BoundExplain):
             return self._explain(bound, sess)
         if isinstance(bound, BoundInsert):
-            return self._insert(bound)
+            return self._insert(bound, sess)
         if isinstance(bound, BoundSet):
             sess.set(
                 bound.name, bound.value, name_position=bound.name_position, value_position=bound.value_position
@@ -167,16 +246,16 @@ class Database:
         plan = plan_select(bound, self.table_handle, session)
         return QueryResult(list(bound.column_infos), iter(plan), tag_prefix="SELECT")
 
-    def _insert(self, bound: BoundInsert) -> QueryResult:
+    def _insert(self, bound: BoundInsert, session: Session) -> QueryResult:
         # [LOCK:write] Phase 3: 테이블 배타 락 (Insert 노드의 TableHandle.append_many: 파일 + 인덱스).
-        node = plan_insert(bound, self.table_handle)
+        node = plan_insert(bound, self.table_handle, session)
         rows = list(node)  # 실제 삽입은 여기서 일어난다 (RETURNING 이 없으면 행은 비어 있다)
         columns = list(bound.returning_infos) if bound.returning is not None else None
         return QueryResult(columns, rows, f"INSERT 0 {node.inserted}")
 
     def _plan(self, bound: BoundInsert | BoundSelect, session: Session) -> PlanNode:
         if isinstance(bound, BoundInsert):
-            return plan_insert(bound, self.table_handle)
+            return plan_insert(bound, self.table_handle, session)
         return plan_select(bound, self.table_handle, session)
 
     def _explain(self, bound: BoundExplain, session: Session) -> QueryResult:

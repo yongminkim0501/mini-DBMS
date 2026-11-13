@@ -1,0 +1,10 @@
+INSERT 0 1
+  name  
+--------
+ before
+(1 row)
+
+psql:<stdin>:4: ERROR:  relation "nope" does not exist
+LINE 1: SELECT * FROM nope;
+                      ^
+exit=3

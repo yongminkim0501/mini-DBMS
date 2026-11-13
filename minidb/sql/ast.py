@@ -15,6 +15,8 @@ from .tokens import RESERVED_KEYWORDS
 __all__ = [
     "QualifiedName",
     "Literal",
+    "Param",
+    "Value",
     "Default",
     "Star",
     "Condition",
@@ -91,6 +93,25 @@ class Literal:
 
 
 @dataclass(frozen=True, slots=True)
+class Param:
+    """파라미터 ``$n`` (``number`` 는 1부터). 리터럴이 올 수 있는 자리(VALUES 값, WHERE 비교의 상수 쪽, LIMIT)에 온다.
+
+    값은 확장 쿼리 프로토콜의 Bind 메시지가 준다. 타입은 바인더가 쓰인 자리에서 추론한다.
+    """
+
+    number: int
+    position: int = field(default=0, compare=False, kw_only=True)
+
+    def to_sql(self) -> str:
+        """SQL 표현."""
+        return f"${self.number}"
+
+
+#: 리터럴 자리에 올 수 있는 값 (상수 또는 파라미터)
+type Value = Literal | Param
+
+
+@dataclass(frozen=True, slots=True)
 class Default:
     """VALUES 안의 ``DEFAULT`` 키워드."""
 
@@ -114,7 +135,7 @@ class Star:
 
 @dataclass(frozen=True, slots=True)
 class Condition:
-    """``column op literal`` 비교 하나. 항상 컬럼이 왼쪽이 되도록 정규화되어 있다.
+    """``column op literal`` 비교 하나. 항상 컬럼이 왼쪽이 되도록 정규화되어 있다 (``$1 = id`` → ``id = $1`` 도 같다).
 
     ``position`` 은 컬럼 식별자의 위치 (바인더의 "column does not exist" 오류용).
     리터럴의 위치는 ``value.position``, 연산자의 위치는 ``op_position``
@@ -124,7 +145,7 @@ class Condition:
 
     column: str
     op: str
-    value: Literal
+    value: Literal | Param
     position: int = field(default=0, compare=False, kw_only=True)
     op_position: int = field(default=0, compare=False, kw_only=True)
     literal_first: bool = field(default=False, compare=False, kw_only=True)
@@ -165,7 +186,7 @@ class InsertStmt:
 
     table: QualifiedName
     columns: tuple[str, ...] | None
-    rows: tuple[tuple[Literal | Default, ...], ...]
+    rows: tuple[tuple[Literal | Param | Default, ...], ...]
     returning: tuple[str, ...] | Star | None
     position: int = field(default=0, compare=False, kw_only=True)
     column_positions: tuple[int, ...] = field(default=(), compare=False, kw_only=True)
@@ -193,14 +214,14 @@ class SelectStmt:
         columns: ``Star`` 또는 컬럼 이름 튜플.
         table: 대상 테이블.
         where: AND 로 연결된 조건들 (없으면 빈 튜플).
-        limit: 행 수 제한. 없거나 ``LIMIT ALL`` 이면 None.
+        limit: 행 수 제한 (정수 또는 파라미터). 없거나 ``LIMIT ALL`` 이면 None.
         column_positions: ``columns`` 가 이름 튜플일 때 각 이름의 위치 (비교 제외).
     """
 
     columns: tuple[str, ...] | Star
     table: QualifiedName
     where: tuple[Condition, ...]
-    limit: int | None
+    limit: int | Param | None
     position: int = field(default=0, compare=False, kw_only=True)
     column_positions: tuple[int, ...] = field(default=(), compare=False, kw_only=True)
 
@@ -210,7 +231,9 @@ class SelectStmt:
         sql = f"SELECT {cols} FROM {self.table.to_sql()}"
         if self.where:
             sql += " WHERE " + " AND ".join(c.to_sql() for c in self.where)
-        if self.limit is not None:
+        if isinstance(self.limit, Param):
+            sql += f" LIMIT {self.limit.to_sql()}"
+        elif self.limit is not None:
             sql += f" LIMIT {self.limit}"
         return sql
 

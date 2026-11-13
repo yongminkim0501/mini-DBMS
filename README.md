@@ -12,6 +12,7 @@ Krafton Jungle Week 12 DBMS 구현
 | 1 | SQL 처리기: 렉서·파서·AST, 바인더·플래너·실행기·CLI (docs/sql-grammar.md, docs/execution.md) | ✅ |
 | 2 | id 기반 메모리 B+ 트리 인덱스, 인덱스 스캔, SET/SHOW (docs/bptree.md, docs/phase2-report.md) | ✅ |
 | 3 | 동시성 제어(RWLock, 스냅샷 읽기), 직접 구현한 스레드 풀 + HTTP API 서버, 두 빌드 병렬 성능 비교 (docs/server.md, docs/phase3-report.md) | ✅ |
+| 3+ | PostgreSQL wire protocol v3: psql·pg8000·pgbench 가 그대로 접속, `$n` 파라미터와 준비된 문장, 쿼리 취소 (docs/pg-protocol.md) | ✅ |
 
 ## 구조
 
@@ -29,6 +30,7 @@ minidb/session.py     세션 설정 (SET/SHOW, enable_indexscan)
 minidb/concurrency.py 쓰기 우선 RWLock
 minidb/server/        HTTP 서버: http(파서) · pool(워커 풀) · dispatcher(selectors) · api(엔드포인트) · server(조립)
 minidb/client.py      HTTP 클라이언트 (python -m minidb client)
+minidb/pgwire/        PostgreSQL 프로토콜: messages(인코딩) · protocol(연결 상태 기계) · service(디스패처 연결, 취소)
 minidb/planner.py     실행 계획 (choose_access_path: id 조건 병합 → Index Scan / Seq Scan)
 minidb/executor.py    계획 노드 (이터레이터 모델: SeqScan, IndexScan, Filter, ...), EXPLAIN
 minidb/engine.py      Database: 외부가 쓰는 단일 진입점
@@ -42,10 +44,13 @@ docs/execution.md         파이프라인, 바인더 타입 규칙, NULL 의미�
 docs/bptree.md            B+ 트리 구조, 분할, 벌크 로딩, 불변식, Phase 3 락 계획
 docs/phase2-report.md     인덱스 벤치마크 결과와 해석, order 선택 근거
 docs/server.md            서버 아키텍처, 요청 생명주기, 잠금 설계와 스냅샷 읽기, API, 한계, 정상 종료, 보안
-docs/phase3-report.md     서버 병렬 처리 성능 실험 (3.14.6 vs 3.14.6t vs 3.14.6t + PYTHON_GIL=1)
+docs/phase3-report.md     서버 병렬 처리 성능 실험 (3.14.6 vs 3.14.6t vs 3.14.6t + PYTHON_GIL=1), pgbench 결과
+docs/pg-protocol.md       PG 프로토콜: 메시지 흐름(시퀀스 다이어그램), 바이트 형식, 준비된 문장, 취소, PostgreSQL 과의 차이
 scripts/gen_insert_sql.py 대량 INSERT 스크립트 생성, scripts/bench_e2e.py 종단 벤치마크
 scripts/bench_index.py    인덱스 벤치마크, scripts/demo_phase2.sql 인덱스 시연
 scripts/bench_server.py   서버 성능 실험 (loadgen.py 부하 생성기, plot_results.py SVG 그래프)
+scripts/pgbench/          pgbench 사용자 정의 스크립트(point/insert)와 실행·집계 스크립트
+scripts/compat/check_psycopg.py  psycopg2/psycopg 호환 확인 (별도 프로세스, 수동)
 ```
 
 ## 개발 환경
@@ -198,6 +203,94 @@ GIL 빌드는 워커 수와 무관하게 평평하고, 3.14t 에 `PYTHON_GIL=1` 
 
 ![점 검색](docs/images/phase3_point.svg)
 ![Seq Scan](docs/images/phase3_scan.svg)
+
+## psql 로 접속하기 (PostgreSQL wire protocol)
+
+> 인증이 없다(trust). 기본 바인딩 127.0.0.1 을 바꿔 외부에 노출하지 말 것. 자세한 내용은 docs/pg-protocol.md.
+
+```sh
+# 1) 서버: --pg-port 만 주면 PG 만, 둘 다 생략하면 HTTP 8080 + PG 5433
+uv run --python 3.14.6t python -m minidb serve --db ./db --pg-port 5433
+
+# 2) 접속 (user 는 아무 이름, database 는 --pg-database 값: 기본 minidb)
+psql -h 127.0.0.1 -p 5433 -U me -d minidb
+```
+
+실제 터미널 출력 (users 100만 건 DB, 3.14.6t 서버):
+
+```text
+$ psql -h 127.0.0.1 -p 5433 -U me -d minidb
+psql (17.9 (Homebrew), server 16.0)
+Type "help" for help.
+
+minidb=# SHOW client_encoding;
+ client_encoding 
+-----------------
+ UTF8
+(1 row)
+
+minidb=# \timing on
+Timing is on.
+minidb=# SELECT * FROM users WHERE age = 1000;
+^CCancel request sent
+ERROR:  canceling statement due to user request
+Time: 1016.405 ms (00:01.016)
+minidb=# SELECT name FROM users WHERE id = 1000001;
+  name  
+--------
+ 홍길동
+(1 row)
+
+Time: 1.327 ms
+minidb=# \q
+```
+
+Ctrl+C 를 누르면 psql 이 **새 연결**로 CancelRequest(연결 번호 + 비밀 키)를 보내고, 서버의 디스패처 스레드가 워커를 거치지 않고
+바로 그 연결의 취소 플래그를 켠다. 스캔 루프가 1,024 행마다 플래그를 확인해 57014 로 끝낸다. 같은 연결로 다음 쿼리를 계속 쓸 수 있다.
+
+대화형 psql 은 로케일에서 client_encoding 을 정한다. `LANG=C` 같은 비 UTF-8 로케일이면 `SQL_ASCII` 를 보내고, minidb 는 UTF8 만
+받으므로 `FATAL: invalid value for parameter "client_encoding": "SQL_ASCII"` 로 거절한다. UTF-8 로케일을 쓰거나 `PGCLIENTENCODING=UTF8` 을 준다.
+
+psql 의 `\d` 같은 메타 명령은 `pg_catalog` 를 조회하므로 오류가 난다 (범위 밖). 트랜잭션(`BEGIN`)도 지원하지 않는다.
+
+```python
+# pg8000 (순수 파이썬 드라이버. 3.14t 에서도 GIL 을 다시 켜지 않는다)
+import pg8000.native
+
+conn = pg8000.native.Connection("me", host="127.0.0.1", port=5433, database="minidb")
+conn.run("INSERT INTO users (name, age) VALUES (:n, :a)", n="홍길동", a=31)   # 확장 쿼리: 값은 Bind 로 따로 간다
+print(conn.run("SELECT * FROM users WHERE id = :i", i=1))                     # [[1, '홍길동', 31]]
+ps = conn.prepare("SELECT name FROM users WHERE id = :i")                     # 준비된 문장: 파싱은 한 번
+print([ps.run(i=i) for i in (1, 2)])
+conn.close()
+# DB-API(pg8000.dbapi, psycopg2)는 conn.autocommit = True 로 쓴다 (기본 트랜잭션 모드는 BEGIN 을 보낸다)
+```
+
+### pgbench
+
+```sh
+# pgbench 설치: macOS  brew install postgresql@17   (PATH 에 /opt/homebrew/opt/postgresql@17/bin)
+#              Ubuntu sudo apt-get install postgresql-contrib   (pgbench 포함)
+pgbench -n -h 127.0.0.1 -p 5433 -U bench -d minidb -c 32 -j 4 -T 10 -M prepared \
+        -f scripts/pgbench/point.sql@9 -f scripts/pgbench/insert.sql@1
+# 전체 실험 (3 조건 × 워커 1·4·코어 수 × simple/extended/prepared × point/insert/mixed, 약 50분)
+uv run --python 3.14.6+gil python scripts/pgbench/run_pgbench.py
+```
+
+-n 은 vacuum 을 건너뛴다(필수: minidb 에는 VACUUM 이 없다). 사용자 정의 스크립트(-f)만 쓰면 pgbench 는 시작할 때 다른 쿼리를
+보내지 않는다. pgbench 가 없으면 run_pgbench.py 는 아무것도 하지 않고 끝난다. 결과는 docs/phase3-report.md §5.
+
+pgbench 결과 (Apple M4, -c 32 -j 4 -T 10, 3회 중앙값, tps):
+
+| 워크로드 | 서버 | simple | extended | prepared | HTTP (Phase 3) |
+|---|---|---|---|---|---|
+| point | 3.14.6 +GIL, 워커 4 | 7,404 | 6,145 | 9,263 | 6,316 |
+| point | 3.14.6t, 워커 4 | 20,752 | 17,987 | 23,793 | 19,185 |
+| insert | 3.14.6 +GIL, 워커 1 | 9,071 | 7,681 | 14,533 | 6,609 |
+| insert | 3.14.6t, 워커 1 | 11,928 | 9,794 | 21,809 | 9,596 |
+
+prepared 는 요청마다 하던 파싱·바인딩을 빼므로 코어 하나에 묶인 경우 23–83% 빠르다. extended(매번 Parse)는 메시지가 늘어 simple 보다 느리다.
+전체 표와 해석은 docs/phase3-report.md §5.
 
 ## 벤치마크
 

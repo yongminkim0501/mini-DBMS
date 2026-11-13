@@ -7,7 +7,7 @@ Phase 3 에서 PostgreSQL wire protocol 로 그대로 내보낼 수 있게 설�
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .catalog import BIGINT, TEXT
@@ -29,17 +29,21 @@ class ColumnInfo:
         name: 컬럼 이름.
         type_name: PostgreSQL 타입 이름 (``bigint`` / ``text``).
         type_oid: PostgreSQL 타입 OID (bigint=20, text=25).
+        table_oid: 테이블 컬럼이면 테이블의 oid, 계산 컬럼(EXPLAIN, SHOW)이면 0 (RowDescription 용).
+        column_number: 테이블 컬럼 번호 (1부터), 계산 컬럼이면 0 (RowDescription 용).
     """
 
     name: str
     type_name: str
     type_oid: int
+    table_oid: int = field(default=0, compare=False)
+    column_number: int = field(default=0, compare=False)
 
     @classmethod
-    def for_type(cls, name: str, sql_type: str) -> ColumnInfo:
+    def for_type(cls, name: str, sql_type: str, *, table_oid: int = 0, column_number: int = 0) -> ColumnInfo:
         """카탈로그 타입(``BIGINT``/``TEXT``)으로 ColumnInfo 를 만든다."""
         type_name, oid = _TYPE_INFO[sql_type]
-        return cls(name, type_name, oid)
+        return cls(name, type_name, oid, table_oid, column_number)
 
     @property
     def is_numeric(self) -> bool:

@@ -50,6 +50,8 @@ _TOKEN_RE = re.compile(_TOKEN_PATTERN.replace("@IDENT@", UNQUOTED_IDENT_PATTERN)
 _TRAILING_JUNK_RE = re.compile(r"[A-Za-z_\u0080-\U0010FFFF]")
 # 블록 주석 안에서 다음 '/*' 또는 '*/' 를 찾는다.
 _COMMENT_DELIM_RE = re.compile(r"/\*|\*/")
+# Bind 메시지의 파라미터 개수 필드가 int16 이므로 번호의 상한도 같다 (PostgreSQL 과 동일).
+_MAX_PARAM = 65535
 
 _OP_TYPES: dict[str, TokenType] = {
     "(": TokenType.LPAREN,
@@ -177,6 +179,23 @@ def iter_tokens(text: str, *, base_offset: int = 0) -> Iterator[Token]:
             pos = end
             continue
 
+        if kind == "param":
+            # $n: 1 이상의 10진수, 앞자리 0 없음 ($0, $01 은 구문 오류). 바로 뒤에 식별자 문자가 붙으면 오류.
+            raw = m.group()
+            if end < n and _TRAILING_JUNK_RE.match(text, end):
+                junk_end = _TOKEN_RE.match(text, end).end()
+                raise SqlSyntaxError(
+                    f'trailing junk after parameter at or near "{text[pos:junk_end]}"', position=pos + b + 1
+                )
+            if raw[1] == "0":
+                raise SqlSyntaxError(f'syntax error at or near "{raw}"', position=pos + b + 1)
+            number = int(raw[1:])
+            if number > _MAX_PARAM:
+                raise SqlSyntaxError(f'syntax error at or near "{raw}"', position=pos + b + 1)
+            yield Token(T.PARAM, number, pos + b, end + b, line, pos - line_start + 1)
+            pos = end
+            continue
+
         if kind == "line_comment":
             pos = end  # 줄 끝의 '\n' 은 다음 ws 가 처리한다
             continue
@@ -208,8 +227,6 @@ def iter_tokens(text: str, *, base_offset: int = 0) -> Iterator[Token]:
             )
         if kind == "unicode_ident":
             raise FeatureNotSupported('U&"..." identifiers are not supported', position=pos + b + 1)
-        if kind == "param":
-            raise FeatureNotSupported(f"parameters ({m.group()}) are not supported", position=pos + b + 1)
         if kind == "dollar_quote":
             raise FeatureNotSupported("dollar-quoted strings are not supported", position=pos + b + 1)
         # other: 알 수 없는 문자

@@ -1,0 +1,29 @@
+INSERT 0 3
+              QUERY PLAN              
+--------------------------------------
+ Index Scan using users_pkey on users
+   Index Cond: (id = 2)
+(2 rows)
+
+              QUERY PLAN              
+--------------------------------------
+ Index Scan using users_pkey on users
+   Index Cond: (id >= 2)
+   Heap Fetch: sequential
+   Filter: (age > 30)
+(4 rows)
+
+              QUERY PLAN              
+--------------------------------------
+ Limit
+   ->  Seq Scan on users
+         Filter: (name = 'kim'::text)
+(3 rows)
+
+   QUERY PLAN    
+-----------------
+ Insert on users
+   ->  Result
+(2 rows)
+
+exit=0

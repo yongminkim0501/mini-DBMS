@@ -1,0 +1,569 @@
+{
+  "ft_gil1|insert|extended|1": {
+    "tps": 7079.739668,
+    "latency_avg_ms": 4.52,
+    "server_cpu_cores": 1.11125962275664,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|insert|extended|10": {
+    "tps": 5956.463669,
+    "latency_avg_ms": 5.372,
+    "server_cpu_cores": 1.1756880349945165,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|insert|extended|4": {
+    "tps": 6034.893947,
+    "latency_avg_ms": 5.302,
+    "server_cpu_cores": 1.1739970727808917,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|insert|prepared|1": {
+    "tps": 12690.324091,
+    "latency_avg_ms": 2.522,
+    "server_cpu_cores": 1.1864422759668247,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|insert|prepared|10": {
+    "tps": 9420.217276,
+    "latency_avg_ms": 3.397,
+    "server_cpu_cores": 1.2969063032703403,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|insert|prepared|4": {
+    "tps": 9825.749506,
+    "latency_avg_ms": 3.257,
+    "server_cpu_cores": 1.2775995020050064,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|insert|simple|1": {
+    "tps": 8242.547979,
+    "latency_avg_ms": 3.882,
+    "server_cpu_cores": 1.1296131309980006,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|insert|simple|10": {
+    "tps": 6995.415424,
+    "latency_avg_ms": 4.574,
+    "server_cpu_cores": 1.1826671737012293,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|insert|simple|4": {
+    "tps": 6921.122647,
+    "latency_avg_ms": 4.624,
+    "server_cpu_cores": 1.1888415395425067,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|mixed|extended|1": {
+    "tps": 6134.056567,
+    "latency_avg_ms": 5.217,
+    "server_cpu_cores": 1.0985718469834076,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|mixed|extended|10": {
+    "tps": 5295.809366,
+    "latency_avg_ms": 6.043,
+    "server_cpu_cores": 1.1563315221784831,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|mixed|extended|4": {
+    "tps": 5309.730618,
+    "latency_avg_ms": 6.027,
+    "server_cpu_cores": 1.1572080546208938,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|mixed|prepared|1": {
+    "tps": 9433.787684,
+    "latency_avg_ms": 3.392,
+    "server_cpu_cores": 1.1442003281281283,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|mixed|prepared|10": {
+    "tps": 7705.817186,
+    "latency_avg_ms": 4.153,
+    "server_cpu_cores": 1.2241222284643056,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|mixed|prepared|4": {
+    "tps": 7712.930175,
+    "latency_avg_ms": 4.149,
+    "server_cpu_cores": 1.2269837046916847,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|mixed|simple|1": {
+    "tps": 7378.019601,
+    "latency_avg_ms": 4.337,
+    "server_cpu_cores": 1.1206426860943712,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|mixed|simple|10": {
+    "tps": 6290.007141,
+    "latency_avg_ms": 5.087,
+    "server_cpu_cores": 1.1714510568175658,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|mixed|simple|4": {
+    "tps": 6305.03758,
+    "latency_avg_ms": 5.075,
+    "server_cpu_cores": 1.175058024264738,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|point|extended|1": {
+    "tps": 6088.377486,
+    "latency_avg_ms": 5.256,
+    "server_cpu_cores": 1.0934899888332017,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|point|extended|10": {
+    "tps": 5304.871066,
+    "latency_avg_ms": 6.032,
+    "server_cpu_cores": 1.1469724176170415,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|point|extended|4": {
+    "tps": 5300.941923,
+    "latency_avg_ms": 6.037,
+    "server_cpu_cores": 1.1513820911939363,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|point|prepared|1": {
+    "tps": 9415.029216,
+    "latency_avg_ms": 3.399,
+    "server_cpu_cores": 1.1438318140340669,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|point|prepared|10": {
+    "tps": 7708.415456,
+    "latency_avg_ms": 4.151,
+    "server_cpu_cores": 1.213083151539767,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|point|prepared|4": {
+    "tps": 7572.636199,
+    "latency_avg_ms": 4.226,
+    "server_cpu_cores": 1.1988423219771243,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|point|simple|1": {
+    "tps": 7428.064538,
+    "latency_avg_ms": 4.308,
+    "server_cpu_cores": 1.1198393058473814,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|point|simple|10": {
+    "tps": 6306.738844,
+    "latency_avg_ms": 5.074,
+    "server_cpu_cores": 1.1648400616823322,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft_gil1|point|simple|4": {
+    "tps": 6311.715331,
+    "latency_avg_ms": 5.07,
+    "server_cpu_cores": 1.1678125291687234,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|insert|extended|1": {
+    "tps": 9793.917955,
+    "latency_avg_ms": 3.267,
+    "server_cpu_cores": 1.2400890549356107,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|insert|extended|10": {
+    "tps": 17090.611244,
+    "latency_avg_ms": 1.872,
+    "server_cpu_cores": 6.877432508716375,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|insert|extended|4": {
+    "tps": 16282.133862,
+    "latency_avg_ms": 1.965,
+    "server_cpu_cores": 3.671647240921861,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|insert|prepared|1": {
+    "tps": 21808.549278,
+    "latency_avg_ms": 1.467,
+    "server_cpu_cores": 1.5393147611434737,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|insert|prepared|10": {
+    "tps": 18310.356663,
+    "latency_avg_ms": 1.748,
+    "server_cpu_cores": 6.6427751742770464,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|insert|prepared|4": {
+    "tps": 18925.727566,
+    "latency_avg_ms": 1.691,
+    "server_cpu_cores": 3.18339743623644,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|insert|simple|1": {
+    "tps": 11928.116966,
+    "latency_avg_ms": 2.683,
+    "server_cpu_cores": 1.2991334510295356,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|insert|simple|10": {
+    "tps": 17171.873077,
+    "latency_avg_ms": 1.864,
+    "server_cpu_cores": 6.44483739461442,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|insert|simple|4": {
+    "tps": 16938.018613,
+    "latency_avg_ms": 1.889,
+    "server_cpu_cores": 3.4672252095143175,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|mixed|extended|1": {
+    "tps": 7707.274065,
+    "latency_avg_ms": 4.152,
+    "server_cpu_cores": 1.1846496669119222,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|mixed|extended|10": {
+    "tps": 18840.077375,
+    "latency_avg_ms": 1.699,
+    "server_cpu_cores": 6.409211149613355,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|mixed|extended|4": {
+    "tps": 17774.120313,
+    "latency_avg_ms": 1.8,
+    "server_cpu_cores": 3.923187403546654,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|mixed|prepared|1": {
+    "tps": 15105.767683,
+    "latency_avg_ms": 2.118,
+    "server_cpu_cores": 1.373411170699204,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|mixed|prepared|10": {
+    "tps": 20603.271457,
+    "latency_avg_ms": 1.553,
+    "server_cpu_cores": 5.9681215295140815,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|mixed|prepared|4": {
+    "tps": 23843.702664,
+    "latency_avg_ms": 1.342,
+    "server_cpu_cores": 3.7239274316667568,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|mixed|simple|1": {
+    "tps": 10210.310732,
+    "latency_avg_ms": 3.134,
+    "server_cpu_cores": 1.2714295094522787,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|mixed|simple|10": {
+    "tps": 20094.946381,
+    "latency_avg_ms": 1.592,
+    "server_cpu_cores": 6.295539365933911,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|mixed|simple|4": {
+    "tps": 18655.90646,
+    "latency_avg_ms": 1.715,
+    "server_cpu_cores": 3.719093687380935,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|point|extended|1": {
+    "tps": 7573.848373,
+    "latency_avg_ms": 4.225,
+    "server_cpu_cores": 1.184159257874634,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|point|extended|10": {
+    "tps": 20147.595421,
+    "latency_avg_ms": 1.588,
+    "server_cpu_cores": 6.5242077377686725,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|point|extended|4": {
+    "tps": 17986.819529,
+    "latency_avg_ms": 1.779,
+    "server_cpu_cores": 3.949124910843271,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|point|prepared|1": {
+    "tps": 15429.413947,
+    "latency_avg_ms": 2.074,
+    "server_cpu_cores": 1.375973641000077,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|point|prepared|10": {
+    "tps": 21382.710313,
+    "latency_avg_ms": 1.497,
+    "server_cpu_cores": 5.869656884795329,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|point|prepared|4": {
+    "tps": 23792.636443,
+    "latency_avg_ms": 1.345,
+    "server_cpu_cores": 3.7102521255024254,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|point|simple|1": {
+    "tps": 10543.659111,
+    "latency_avg_ms": 3.035,
+    "server_cpu_cores": 1.2789286776947617,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|point|simple|10": {
+    "tps": 20960.6903,
+    "latency_avg_ms": 1.527,
+    "server_cpu_cores": 6.241400421495469,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "ft|point|simple|4": {
+    "tps": 20751.849675,
+    "latency_avg_ms": 1.542,
+    "server_cpu_cores": 3.8735178036570317,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|insert|extended|1": {
+    "tps": 7680.776338,
+    "latency_avg_ms": 4.166,
+    "server_cpu_cores": 1.122524270980467,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|insert|extended|10": {
+    "tps": 6735.655606,
+    "latency_avg_ms": 4.751,
+    "server_cpu_cores": 1.2236037732571674,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|insert|extended|4": {
+    "tps": 7011.790707,
+    "latency_avg_ms": 4.564,
+    "server_cpu_cores": 1.2124036150959867,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|insert|prepared|1": {
+    "tps": 14532.618783,
+    "latency_avg_ms": 2.202,
+    "server_cpu_cores": 1.222214564258315,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|insert|prepared|10": {
+    "tps": 11790.852492,
+    "latency_avg_ms": 2.714,
+    "server_cpu_cores": 1.3671793508866659,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|insert|prepared|4": {
+    "tps": 11447.104521,
+    "latency_avg_ms": 2.795,
+    "server_cpu_cores": 1.3753173381136785,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|insert|simple|1": {
+    "tps": 9070.62742,
+    "latency_avg_ms": 3.528,
+    "server_cpu_cores": 1.142787442160854,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|insert|simple|10": {
+    "tps": 7620.283081,
+    "latency_avg_ms": 4.199,
+    "server_cpu_cores": 1.2286632409796574,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|insert|simple|4": {
+    "tps": 8169.402373,
+    "latency_avg_ms": 3.917,
+    "server_cpu_cores": 1.2364002134626262,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|mixed|extended|1": {
+    "tps": 6719.55161,
+    "latency_avg_ms": 4.762,
+    "server_cpu_cores": 1.1090629595265618,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|mixed|extended|10": {
+    "tps": 6075.318589,
+    "latency_avg_ms": 5.267,
+    "server_cpu_cores": 1.1930631517711192,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|mixed|extended|4": {
+    "tps": 5747.629923,
+    "latency_avg_ms": 5.568,
+    "server_cpu_cores": 1.1797040931835983,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|mixed|prepared|1": {
+    "tps": 10565.895251,
+    "latency_avg_ms": 3.029,
+    "server_cpu_cores": 1.1660152502640388,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|mixed|prepared|10": {
+    "tps": 9097.601667,
+    "latency_avg_ms": 3.517,
+    "server_cpu_cores": 1.2856610346131616,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|mixed|prepared|4": {
+    "tps": 8499.876632,
+    "latency_avg_ms": 3.765,
+    "server_cpu_cores": 1.2473884123171424,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|mixed|simple|1": {
+    "tps": 8115.030168,
+    "latency_avg_ms": 3.943,
+    "server_cpu_cores": 1.1337803589587052,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|mixed|simple|10": {
+    "tps": 7181.662499,
+    "latency_avg_ms": 4.456,
+    "server_cpu_cores": 1.2232007134764218,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|mixed|simple|4": {
+    "tps": 6688.802305,
+    "latency_avg_ms": 4.784,
+    "server_cpu_cores": 1.1958674861233276,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|point|extended|1": {
+    "tps": 6770.427883,
+    "latency_avg_ms": 4.726,
+    "server_cpu_cores": 1.1054495551847021,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|point|extended|10": {
+    "tps": 5869.168274,
+    "latency_avg_ms": 5.452,
+    "server_cpu_cores": 1.1759098194385893,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|point|extended|4": {
+    "tps": 6145.011184,
+    "latency_avg_ms": 5.207,
+    "server_cpu_cores": 1.1815823828205472,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|point|prepared|1": {
+    "tps": 10686.429439,
+    "latency_avg_ms": 2.994,
+    "server_cpu_cores": 1.1656235392877519,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|point|prepared|10": {
+    "tps": 8917.063408,
+    "latency_avg_ms": 3.589,
+    "server_cpu_cores": 1.2622764080251487,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|point|prepared|4": {
+    "tps": 9262.915829,
+    "latency_avg_ms": 3.455,
+    "server_cpu_cores": 1.2687034761591256,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|point|simple|1": {
+    "tps": 8160.400395,
+    "latency_avg_ms": 3.921,
+    "server_cpu_cores": 1.132741322080605,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|point|simple|10": {
+    "tps": 7259.295389,
+    "latency_avg_ms": 4.408,
+    "server_cpu_cores": 1.2064876947670629,
+    "failed": 0.0,
+    "runs": 3
+  },
+  "gil|point|simple|4": {
+    "tps": 7403.57648,
+    "latency_avg_ms": 4.322,
+    "server_cpu_cores": 1.2155820161570674,
+    "failed": 0.0,
+    "runs": 3
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "tps": 7693.435492,
+  "latency_avg_ms": 4.159,
+  "transactions": 76927.0,
+  "failed": 0.0,
+  "condition": "gil",
+  "workers": 1,
+  "workload": "insert",
+  "mode": "extended",
+  "rep": 3,
+  "clients": 32,
+  "threads": 4,
+  "duration_s": 10,
+  "server_cpu_cores": 1.122524270980467,
+  "server_runtime": {
+    "python_version": "3.14.6",
+    "sys_version": "3.14.6 (main, Jul 23 2026, 14:51:00) [Clang 22.1.3 ]",
+    "free_threaded_build": false,
+    "gil_enabled": true,
+    "cpu_count": 10,
+    "pid": 22320
+  },
+  "pgbench_version": "pgbench (PostgreSQL) 17.9 (Homebrew)",
+  "raw": "pgbench (17.9 (Homebrew), server 16.0)\ntransaction type: /Users/yongmin/Desktop/mini-DBMS/scripts/pgbench/insert.sql\nscaling factor: 1\nquery mode: extended\nnumber of clients: 32\nnumber of threads: 4\nmaximum number of tries: 1\nduration: 10 s\nnumber of transactions actually processed: 76927\nnumber of failed transactions: 0 (0.000%)\nlatency average = 4.159 ms\ninitial connection time = 10.167 ms\ntps = 7693.435492 (without initial connection time)\n"
+}
