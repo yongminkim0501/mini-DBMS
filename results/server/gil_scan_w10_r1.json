@@ -1,0 +1,38 @@
+{
+  "workload": "scan",
+  "procs": 4,
+  "conns_per_proc": 8,
+  "warmup_s": 3.0,
+  "duration_s": 10.0,
+  "requests": 50,
+  "ok": 50,
+  "throughput_rps": 5.0,
+  "status": {
+    "200": 50
+  },
+  "rejected_503": 0,
+  "errors": 0,
+  "latency_ms": {
+    "p50": 6359.633624902926,
+    "p95": 7516.278417082503,
+    "p99": 7645.131374942139,
+    "mean": 6001.134809199721
+  },
+  "server_cpu_cores": 1.0181159091708598,
+  "loadgen_runtime": {
+    "python": "3.14.6",
+    "sys_version": "3.14.6 (main, Jul 23 2026, 14:51:00) [Clang 22.1.3 ]",
+    "cpu_count": 10
+  },
+  "condition": "gil",
+  "workers": 10,
+  "rep": 1,
+  "server_runtime": {
+    "python_version": "3.14.6",
+    "sys_version": "3.14.6 (main, Jul 23 2026, 14:51:00) [Clang 22.1.3 ]",
+    "free_threaded_build": false,
+    "gil_enabled": true,
+    "cpu_count": 10,
+    "pid": 56303
+  }
+}
