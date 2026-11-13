@@ -787,3 +787,97 @@ def test_trailing_zero_bytes_inside_last_record_are_not_tail(path):
         warnings.simplefilter("error")
         with TableFile(path, USERS) as t:
             assert [r for _, r in t.scan()] == [(1, None, 0)]
+
+
+# ------------------------------------------------------------------ on_entry (Phase 2: 인덱스 구성)
+
+
+def collect_entries(path, **kw):
+    seen = []
+    t = TableFile(path, USERS, on_entry=lambda rid, off: seen.append((rid, off)), **kw)
+    return t, seen
+
+
+def test_on_entry_reports_every_record_in_order(path):
+    res = three_records(path)
+    t, seen = collect_entries(path)
+    with t:
+        assert seen == res
+        # 새로 append 한 레코드는 콜백 대상이 아니다 (열 때 한 번만)
+        t.append(("delta", 4))
+    assert seen == res
+
+
+def test_on_entry_empty_and_new_file(path):
+    t, seen = collect_entries(path)
+    t.close()
+    assert seen == []
+    t, seen = collect_entries(path)
+    t.close()
+    assert seen == []
+
+
+def test_on_entry_skips_deleted(path):
+    res = three_records(path)
+    off = res[1][1]
+    _, body = record_at(path.read_bytes(), off)
+    rewrite_record(path, off, bytes([body[0] | FLAG_DELETED]) + body[1:])
+    t, seen = collect_entries(path)
+    t.close()
+    assert seen == [res[0], res[2]]
+
+
+@pytest.mark.parametrize("keep", [5, RH + 4], ids=["header-partial", "body-partial"])
+def test_on_entry_excludes_torn_tail(path, keep):
+    res = three_records(path)
+    raw = path.read_bytes()
+    path.write_bytes(raw[: res[2][1] + keep])
+    with pytest.warns(RuntimeWarning, match="truncated"):
+        t, seen = collect_entries(path)
+    t.close()
+    assert seen == res[:2]
+
+
+def test_on_entry_excludes_zero_filled_tail(path):
+    res = three_records(path)
+    raw = bytearray(path.read_bytes())
+    off = res[2][1]
+    size, body = record_at(raw, off)
+    raw[off + RH : off + size] = b"\x00" * len(body)
+    path.write_bytes(bytes(raw))
+    with pytest.warns(RuntimeWarning, match="truncated"):
+        t, seen = collect_entries(path)
+    t.close()
+    assert seen == res[:2]
+
+
+def test_on_entry_readonly_torn_tail(path):
+    res = three_records(path)
+    raw = path.read_bytes()
+    path.write_bytes(raw[: res[2][1] + RH + 2])
+    with pytest.warns(RuntimeWarning, match="readonly"):
+        t, seen = collect_entries(path, readonly=True)
+    t.close()
+    assert seen == res[:2]
+
+
+def test_on_entry_mid_corruption_propagates(path):
+    res = three_records(path)
+    raw = bytearray(path.read_bytes())
+    raw[res[1][1] + RH + 10] ^= 0x01
+    path.write_bytes(bytes(raw))
+    seen = []
+    with pytest.raises(DataCorrupted, match="body checksum"):
+        TableFile(path, USERS, on_entry=lambda rid, off: seen.append((rid, off)))
+    assert seen == res[:1]  # 손상 전까지만 호출되고 예외가 그대로 올라온다
+
+
+def test_on_entry_exception_propagates(path):
+    three_records(path)
+
+    def boom(rid, off):
+        if rid == 2:
+            raise RuntimeError("stop")
+
+    with pytest.raises(RuntimeError, match="stop"):
+        TableFile(path, USERS, on_entry=boom)

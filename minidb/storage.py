@@ -18,7 +18,7 @@ import os
 import struct
 import warnings
 import zlib
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -251,6 +251,10 @@ class TableFile:
         path: 데이터 파일 경로. 없거나 0바이트면 헤더를 써서 새로 만든다.
         schema: 테이블 스키마.
         max_text_bytes: TEXT 값 하나의 최대 UTF-8 바이트 수.
+        on_entry: 열 때 하는 검증 스캔에서 삭제 플래그가 없는 온전한 레코드마다 ``on_entry(id, offset)`` 를
+            파일 순서(= id 오름차순)대로 호출한다. 잘린 꼬리로 판정된 부분은 호출하지 않는다.
+            중간 손상(DataCorrupted)이면 예외가 그대로 전파된다 (그 전까지 호출된 내용은 호출자가 버려야 한다).
+            엔진은 여기에 B+ 트리 벌크 빌더의 ``add`` 를 넘겨 **파일 스캔 한 번**으로 검증과 인덱스 구성을 함께 한다.
         readonly: True 면 파일을 절대 생성/수정하지 않는다(쓰기 메서드 사용 불가,
             잘린 꼬리는 quarantine/truncate 없이 논리적으로만 제외하고 경고). 덤프 도구용.
     """
@@ -262,6 +266,7 @@ class TableFile:
         *,
         max_text_bytes: int = 1_048_576,
         readonly: bool = False,
+        on_entry: Callable[[int, int], None] | None = None,
     ) -> None:
         self.path: Path = Path(path)
         self.schema: TableSchema = schema
@@ -276,7 +281,7 @@ class TableFile:
 
         self._open_or_create()
         # [LOCK:write] _end / _next_id 는 append 때마다 갱신되는 공유 상태.
-        self._end, self._next_id = self._recover()
+        self._end, self._next_id = self._recover(on_entry)
 
         self._reader = open(self.path, "rb", buffering=0)
         if not readonly:
@@ -326,7 +331,7 @@ class TableFile:
                 f"schema \"{self.schema.name}\" has {len(self.schema.columns)}"
             )
 
-    def _recover(self) -> tuple[int, int]:
+    def _recover(self, on_entry: Callable[[int, int], None] | None = None) -> tuple[int, int]:
         """전체 레코드를 한 번 훑어 (논리적 파일 끝, next_id) 를 복원한다.
 
         offset 위치의 레코드를 다음 순서로 판정한다 (docs/storage-format.md 의 표 참고):
@@ -340,6 +345,8 @@ class TableFile:
         6. id 가 이전 레코드보다 크지 않음             → DataCorrupted
 
         필드 디코딩은 하지 않는다(두 CRC 와 id 만 확인). DataCorrupted 를 낼 때는 파일을 건드리지 않는다.
+        판정을 모두 통과한 레코드 중 삭제 플래그가 없는 것마다 ``on_entry(id, offset)`` 를 호출한다.
+        잘린 꼬리는 그 레코드 자리에서 판정되어 루프가 끝나므로, 꼬리 부분에 대해서는 호출되지 않는다.
         """
         size = self.path.stat().st_size
         min_body = self._codec.min_body
@@ -378,6 +385,8 @@ class TableFile:
                     )
                 last_id = rid
                 good_end = offset + RECORD_HEADER_SIZE + length
+                if on_entry is not None and not buf[p] & FLAG_DELETED:
+                    on_entry(rid, offset)
         # 판정 1, 4 는 _iter_raw 가 조용히 멈추는 것으로 나타난다: good_end < size.
 
         if good_end != size:
