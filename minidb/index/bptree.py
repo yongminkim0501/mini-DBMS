@@ -43,7 +43,7 @@ from typing import Any
 __all__ = ["BPlusTree", "BulkBuilder", "DuplicateKeyError", "DEFAULT_ORDER", "DEFAULT_LEAF_FILL_FACTOR"]
 
 #: 기본 order (노드당 최대 키 수). scripts/bench_index.py 의 order 비교 결과로 정했다 (docs/phase2-report.md).
-DEFAULT_ORDER: int = 64
+DEFAULT_ORDER: int = 128
 #: 맨 오른쪽 분할과 벌크 로딩의 채움률. PostgreSQL B-tree 리프 fillfactor 기본값(90)과 같다.
 DEFAULT_LEAF_FILL_FACTOR: float = 0.9
 MIN_ORDER: int = 3

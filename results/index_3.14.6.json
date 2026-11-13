@@ -1,0 +1,228 @@
+{
+  "benchmark": "index",
+  "timestamp": "2026-11-13T01:54:38+00:00",
+  "environment": {
+    "python_version": "3.14.6",
+    "sys_version": "3.14.6 (main, Jul 23 2026, 14:51:00) [Clang 22.1.3 ]",
+    "free_threaded_build": false,
+    "gil_enabled": true,
+    "cpu_count": 10,
+    "platform": "macOS-15.1-arm64-arm-64bit-Mach-O"
+  },
+  "params": {
+    "rows": 1000000,
+    "lookups": 10000,
+    "scan_runs": 20,
+    "seed": 42,
+    "default_order": 128,
+    "repeat": 3
+  },
+  "results": {
+    "initial_load": {
+      "load_seconds": 15.010933791985735,
+      "rows": 1000000,
+      "rows_per_sec": 66618.10743139079
+    },
+    "build": {
+      "keys": 1000000,
+      "order": 128,
+      "open_verify_only_seconds": 0.7670396250905469,
+      "open_with_bulk_index_seconds": 0.9945927920052782,
+      "bulk_overhead_in_open_seconds": 0.22755316691473126,
+      "bulk_only_seconds": 0.1769322920590639,
+      "incremental_insert_seconds": 0.6656536660157144,
+      "bulk_memory_bytes": 18179216,
+      "incremental_memory_bytes": 21951392,
+      "dict_memory_bytes": 41943128,
+      "bulk_stats": {
+        "keys": 1000000,
+        "order": 128,
+        "height": 3,
+        "nodes": 8772,
+        "leaves": 8696,
+        "internal_nodes": 76,
+        "leaf_fill_avg": 0.8984015639374425,
+        "leaf_fill_min": 0.5859375,
+        "internal_fill_avg": 0.893811677631579,
+        "internal_fill_min": 0.8671875
+      },
+      "incremental_stats": {
+        "keys": 1000000,
+        "order": 128,
+        "height": 3,
+        "nodes": 8772,
+        "leaves": 8696,
+        "internal_nodes": 76,
+        "leaf_fill_avg": 0.8984015639374425,
+        "leaf_fill_min": 0.5859375,
+        "internal_fill_avg": 0.893811677631579,
+        "internal_fill_min": 0.8671875
+      }
+    },
+    "point": {
+      "lookups": 10000,
+      "bptree_search_total_ms": 10.612832964397967,
+      "bptree_search_us_per_lookup": 1.0612832964397967,
+      "dict_get_total_ms": 3.409750061109662,
+      "dict_get_us_per_lookup": 0.3409750061109662,
+      "sql_id_eq_index_on": {
+        "runs": 10000,
+        "avg_ms": 0.03916449572425336,
+        "median_ms": 0.03845803439617157,
+        "min_ms": 0.036334036849439144,
+        "max_ms": 0.5318749463185668,
+        "avg_rows": 1.0
+      },
+      "sql_id_eq_index_off": {
+        "runs": 20,
+        "avg_ms": 1881.5050812379923,
+        "median_ms": 1848.1113124871626,
+        "min_ms": 1833.0273749306798,
+        "max_ms": 2028.4859579987824,
+        "avg_rows": 1.0
+      },
+      "sql_name_eq": {
+        "runs": 20,
+        "avg_ms": 1879.7305042098742,
+        "median_ms": 1853.2900210702792,
+        "min_ms": 1818.4542079688981,
+        "max_ms": 2248.1516669504344,
+        "avg_rows": 1.0
+      }
+    },
+    "range": {
+      "note": "dict 는 키 순서를 유지하지 않아 범위 검색을 할 수 없다 (모든 키를 훑거나 정렬해야 함). B+ 트리는 시작 리프를 O(log n) 에 찾은 뒤 리프 연결 리스트를 따라간다.",
+      "10": {
+        "index_on": {
+          "runs": 50,
+          "avg_ms": 0.10787572944536805,
+          "median_ms": 0.10075001046061516,
+          "min_ms": 0.08533289656043053,
+          "max_ms": 0.3813749644905329,
+          "avg_rows": 10.0
+        },
+        "index_off": {
+          "runs": 10,
+          "avg_ms": 1960.8115622657351,
+          "median_ms": 1929.5893744565547,
+          "min_ms": 1900.6013330072165,
+          "max_ms": 2151.7532089492306,
+          "avg_rows": 10.0
+        },
+        "speedup": 18176.57755221722
+      },
+      "1000": {
+        "index_on": {
+          "runs": 50,
+          "avg_ms": 3.166814164724201,
+          "median_ms": 3.1591870356351137,
+          "min_ms": 3.121832967735827,
+          "max_ms": 3.5297920694574714,
+          "avg_rows": 1000.0
+        },
+        "index_off": {
+          "runs": 10,
+          "avg_ms": 1992.165325093083,
+          "median_ms": 1953.9736669976264,
+          "min_ms": 1907.4057079851627,
+          "max_ms": 2243.460000026971,
+          "avg_rows": 1000.0
+        },
+        "speedup": 629.0755382125751
+      },
+      "100000": {
+        "index_on": {
+          "runs": 10,
+          "avg_ms": 318.99132918333635,
+          "median_ms": 315.79045846592635,
+          "min_ms": 313.8004159554839,
+          "max_ms": 348.0815419461578,
+          "avg_rows": 100000.0
+        },
+        "index_off": {
+          "runs": 10,
+          "avg_ms": 1986.429683410097,
+          "median_ms": 1957.8126040287316,
+          "min_ms": 1925.9276250377297,
+          "max_ms": 2101.682833977975,
+          "avg_rows": 100000.0
+        },
+        "speedup": 6.227221562716586
+      }
+    },
+    "orders": {
+      "16": {
+        "bulk_seconds": 0.2969080420443788,
+        "incremental_seconds": 0.8690059169894084,
+        "random_insert_300k_seconds": 0.40490166703239083,
+        "search_us_per_lookup": 1.3447791698854417,
+        "height": 6,
+        "nodes": 76534,
+        "memory_bytes": 35960360
+      },
+      "32": {
+        "bulk_seconds": 0.19532633305061609,
+        "incremental_seconds": 0.7620169998845086,
+        "random_insert_300k_seconds": 0.35813995893113315,
+        "search_us_per_lookup": 1.1288099992088974,
+        "height": 5,
+        "nodes": 36993,
+        "memory_bytes": 28051664
+      },
+      "64": {
+        "bulk_seconds": 0.17855566600337625,
+        "incremental_seconds": 0.7262627920135856,
+        "random_insert_300k_seconds": 0.32698466698639095,
+        "search_us_per_lookup": 1.0896729200612754,
+        "height": 4,
+        "nodes": 17854,
+        "memory_bytes": 22409936
+      },
+      "128": {
+        "bulk_seconds": 0.1801109160296619,
+        "incremental_seconds": 0.6737364999717101,
+        "random_insert_300k_seconds": 0.3164678330067545,
+        "search_us_per_lookup": 0.890318340389058,
+        "height": 3,
+        "nodes": 8772,
+        "memory_bytes": 18179216
+      },
+      "256": {
+        "bulk_seconds": 0.1690487500745803,
+        "incremental_seconds": 0.6589633750263602,
+        "random_insert_300k_seconds": 0.3140189169207588,
+        "search_us_per_lookup": 0.9811637492384762,
+        "height": 3,
+        "nodes": 4368,
+        "memory_bytes": 17849624
+      },
+      "512": {
+        "bulk_seconds": 0.16731995798181742,
+        "incremental_seconds": 0.6916009170236066,
+        "random_insert_300k_seconds": 0.33262300002388656,
+        "search_us_per_lookup": 1.0151449998375028,
+        "height": 3,
+        "nodes": 2180,
+        "memory_bytes": 16856056
+      }
+    },
+    "split_policy": {
+      "rightmost_on": {
+        "insert_seconds": 0.6711252079112455,
+        "memory_bytes": 21951392,
+        "leaf_fill_avg": 0.8984015639374425,
+        "internal_fill_avg": 0.893811677631579,
+        "height": 3,
+        "nodes": 8772
+      },
+      "rightmost_off": {
+        "insert_seconds": 0.7558105000061914,
+        "memory_bytes": 22364824,
+        "leaf_fill_avg": 0.5078328133125325,
+        "internal_fill_avg": 0.5007486979166667,
+        "height": 4,
+        "nodes": 15624
+      }
+    }
+  }
+}
