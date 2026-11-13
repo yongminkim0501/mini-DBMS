@@ -1,0 +1,84 @@
+INSERT 0 6
+              QUERY PLAN              
+--------------------------------------
+ Index Scan using users_pkey on users
+   Index Cond: (id = 3)
+(2 rows)
+
+ id | name | age 
+----+------+-----
+  3 | park |    
+(1 row)
+
+               QUERY PLAN               
+----------------------------------------
+ Index Scan using users_pkey on users
+   Index Cond: ((id >= 2) AND (id < 5))
+(2 rows)
+
+ id | name | age 
+----+------+-----
+  2 | lee  |  31
+  3 | park |    
+  4 |      |  40
+(3 rows)
+
+                  QUERY PLAN                  
+----------------------------------------------
+ Limit
+   ->  Index Scan using users_pkey on users
+         Index Cond: ((id > 1) AND (id <= 6))
+         Filter: (age > 30)
+(4 rows)
+
+ name 
+------
+ lee
+(1 row)
+
+              QUERY PLAN               
+---------------------------------------
+ Index Scan using users_pkey on users
+   Index Cond: ((id > 5) AND (id < 3))
+(2 rows)
+
+ id | name | age 
+----+------+-----
+(0 rows)
+
+                 QUERY PLAN                  
+---------------------------------------------
+ Index Scan using users_pkey on users
+   Index Cond: (id > 1180591620717411303424)
+(2 rows)
+
+               QUERY PLAN                
+-----------------------------------------
+ Seq Scan on users
+   Filter: (id < 1180591620717411303424)
+(2 rows)
+
+     QUERY PLAN      
+---------------------
+ Seq Scan on users
+   Filter: (id <> 3)
+(2 rows)
+
+           QUERY PLAN           
+--------------------------------
+ Seq Scan on users
+   Filter: (name = 'kim'::text)
+(2 rows)
+
+              QUERY PLAN              
+--------------------------------------
+ Index Scan using users_pkey on users
+   Index Cond: (id = '4'::bigint)
+(2 rows)
+
+ id | name | age 
+----+------+-----
+  4 |      |  40
+(1 row)
+
+[exit 0]

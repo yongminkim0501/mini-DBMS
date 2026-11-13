@@ -182,3 +182,35 @@ def test_streaming_large_script_from_stdin(db):
     assert code == 0
     assert out.endswith("  id  \n------\n 3000\n(1 row)\n\n")
     assert out.count("INSERT 0 1") == 3000
+
+
+# ------------------------------------------------------------------ --no-index / SET / SHOW
+
+
+def test_no_index_option(db):
+    sql = "INSERT INTO users (name) VALUES ('a'), ('b'); SHOW enable_indexscan; EXPLAIN SELECT * FROM users WHERE id = 2;"
+    code, out, err = run(["-c", sql, "--db", str(db)])
+    assert (code, err) == (0, "")
+    assert " on\n" in out and "Index Scan using users_pkey on users" in out
+    code, out, err = run(["-c", "SHOW enable_indexscan; EXPLAIN SELECT * FROM users WHERE id = 2;", "--db", str(db), "--no-index"])
+    assert (code, err) == (0, "")
+    assert " off\n" in out and "Seq Scan on users" in out and "Index Scan" not in out
+
+
+def test_no_index_can_be_overridden_by_set(db):
+    sql = "SET enable_indexscan = on; EXPLAIN SELECT * FROM users WHERE id = 2;"
+    code, out, _ = run(["-c", sql, "--db", str(db), "--no-index"])
+    assert code == 0
+    assert out.startswith("SET\n") and "Index Scan using users_pkey on users" in out
+
+
+def test_set_error_output(db):
+    code, out, err = run(["-c", "SET enable_indexscan = maybe;", "--db", str(db)])
+    assert code == 1 and out == ""
+    assert err.splitlines()[0] == 'ERROR:  parameter "enable_indexscan" requires a Boolean value'
+
+
+def test_set_is_session_scoped_per_run(db):
+    run(["-c", "SET enable_indexscan = off;", "--db", str(db)])
+    code, out, _ = run(["-c", "SHOW enable_indexscan;", "--db", str(db)])
+    assert " on\n" in out  # 실행(세션)마다 기본값에서 시작
