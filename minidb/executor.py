@@ -111,17 +111,26 @@ class PlanNode:
 
 
 class SeqScan(PlanNode):
-    """테이블 전체를 파일 순서대로 읽는다 (TableFile.scan). deleted 레코드는 저장 계층이 건너뛴다."""
+    """테이블 전체를 파일 순서대로 읽는다 (TableFile.scan). deleted 레코드는 저장 계층이 건너뛴다.
 
-    def __init__(self, table_file: TableFile, schema: TableSchema) -> None:
+    스냅샷 읽기: 첫 행을 당길 때 테이블 공유 락을 **잠깐** 잡고 파일 끝 offset 을 기록한 뒤 바로 풀고,
+    그 offset 이전만 락 없이 읽는다. 스캔 도중 커밋된 INSERT 는 보이지 않는다 (문장 단위 일관성).
+    """
+
+    def __init__(self, handle: TableHandle, schema: TableSchema) -> None:
         super().__init__()
-        self.table_file = table_file
+        self.handle = handle
         self.schema = schema
         #: 실제로 저장 계층에서 읽어 올린 행 수 (LIMIT 조기 종료 검증, Rows Removed by Filter 계산용)
         self.rows_scanned = 0
 
+    @property
+    def table_file(self) -> TableFile:
+        return self.handle.file
+
     def _rows(self) -> Iterator[tuple[Any, ...]]:
-        scan = self.table_file.scan()
+        end = self.handle.snapshot_end()  # [LOCK:read] 짧게
+        scan = self.handle.file.scan(end)
         try:
             for _offset, row in scan:
                 self.rows_scanned += 1
@@ -174,24 +183,22 @@ class IndexScan(PlanNode):
     def _rows(self) -> Iterator[tuple[Any, ...]]:
         if self.empty:
             return
-        # [LOCK:read] Phase 3: 인덱스 조회와 read_at 은 테이블 공유 락 아래에서 (range 는 순회가 끝날 때까지).
-        index = self.handle.index
-        read_at = self.handle.file.read_at
+        # 스냅샷 읽기: 트리 조회와 파일 끝 기록만 공유 락 안에서(짧게), 레코드 읽기는 락 밖에서.
         if self.point is not None:
-            offset = index.search(self.point)
-            if offset is None:
+            offset, end = self.handle.point_lookup(self.point)  # [LOCK:read]
+            if offset is None or offset >= end:
                 return
-            row = read_at(offset)
+            row = self.handle.file.read_at(offset)
             if row is not None:
                 self.rows_fetched += 1
                 yield row
             return
-        start = self._start_offset(index)
+        start, end = self.handle.range_start(self.lo, self.hi, self.lo_inclusive, self.hi_inclusive)  # [LOCK:read]
         if start is None:
             return
         hi = self.hi
         hi_inc = self.hi_inclusive
-        rows = self.handle.file.scan_from(start)
+        rows = self.handle.file.scan_from(start, end)
         try:
             for _offset, row in rows:
                 rid = row[0]
@@ -201,11 +208,6 @@ class IndexScan(PlanNode):
                 yield row
         finally:
             rows.close()  # type: ignore[attr-defined]
-
-    def _start_offset(self, index: Any) -> int | None:
-        """하한을 만족하는 첫 키의 offset (없거나 그 키가 이미 상한 밖이면 None)."""
-        first = next(index.range(self.lo, self.hi, self.lo_inclusive, self.hi_inclusive), None)
-        return None if first is None else first[1]
 
 
 class ValuesScan(PlanNode):
@@ -342,7 +344,7 @@ class Insert(PlanNode):
 
     def _rows(self) -> Iterator[tuple[Any, ...]]:
         rows = list(self.child)
-        # [LOCK:write] Phase 3: 테이블 쓰기. 파일 append 와 인덱스 갱신이 한 배타 구간 (TableHandle.append_many).
+        # [LOCK:write] 테이블 배타 락: 파일 append 와 인덱스 갱신이 한 구간 (TableHandle.append_many 안에서).
         placed = self.handle.append_many(rows)
         self.inserted = len(placed)
         if self.returning is None:
