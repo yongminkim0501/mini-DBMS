@@ -32,6 +32,10 @@ __all__ = [
     "InvalidTextRepresentation",
     "UniqueViolation",
     "UndefinedObject",
+    "LockNotAvailable",
+    "TooManyConnections",
+    "InsufficientResources",
+    "QueryCanceled",
 ]
 
 
@@ -201,3 +205,27 @@ class UndefinedObject(DatabaseError):
     """존재하지 않는 객체 (42704). 예: ``unrecognized configuration parameter "x"``."""
 
     default_sqlstate = "42704"
+
+
+class LockNotAvailable(DatabaseError):
+    """락 대기 시간 초과 (55P03). 예: ``could not obtain lock on relation "users"``."""
+
+    default_sqlstate = "55P03"
+
+
+class TooManyConnections(DatabaseError):
+    """최대 연결 수 초과 (53300). PostgreSQL: ``sorry, too many clients already``."""
+
+    default_sqlstate = "53300"
+
+
+class InsufficientResources(DatabaseError):
+    """서버 자원 부족 (53000). 작업 큐가 가득 찼을 때."""
+
+    default_sqlstate = "53000"
+
+
+class QueryCanceled(DatabaseError):
+    """문장 취소 (57014). 서버 종료 등으로 처리하지 못한 요청."""
+
+    default_sqlstate = "57014"

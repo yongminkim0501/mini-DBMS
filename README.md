@@ -11,7 +11,7 @@ Krafton Jungle Week 12 DBMS 구현
 | 0 | 저장 계층(TableFile, 포맷 v2: 레코드 CRC + quarantine 복구), 스키마 카탈로그, SQLSTATE 에러 체계 | ✅ |
 | 1 | SQL 처리기: 렉서·파서·AST, 바인더·플래너·실행기·CLI (docs/sql-grammar.md, docs/execution.md) | ✅ |
 | 2 | id 기반 메모리 B+ 트리 인덱스, 인덱스 스캔, SET/SHOW (docs/bptree.md, docs/phase2-report.md) | ✅ |
-| 3 | 스레드 풀 API 서버 (PostgreSQL wire protocol) | |
+| 3 | 동시성 제어(RWLock, 스냅샷 읽기), 직접 구현한 스레드 풀 + HTTP API 서버, 두 빌드 병렬 성능 비교 (docs/server.md, docs/phase3-report.md) | ✅ |
 
 ## 구조
 
@@ -26,6 +26,9 @@ minidb/binder.py      AST + 카탈로그 → 바인딩된 문장 (이름 해석,
 minidb/index/bptree.py 메모리 B+ 트리 (맨 오른쪽 분할 최적화, 벌크 로딩, 불변식 검사)
 minidb/table.py       TableHandle: 데이터 파일 + id 인덱스(<table>_pkey)
 minidb/session.py     세션 설정 (SET/SHOW, enable_indexscan)
+minidb/concurrency.py 쓰기 우선 RWLock
+minidb/server/        HTTP 서버: http(파서) · pool(워커 풀) · dispatcher(selectors) · api(엔드포인트) · server(조립)
+minidb/client.py      HTTP 클라이언트 (python -m minidb client)
 minidb/planner.py     실행 계획 (choose_access_path: id 조건 병합 → Index Scan / Seq Scan)
 minidb/executor.py    계획 노드 (이터레이터 모델: SeqScan, IndexScan, Filter, ...), EXPLAIN
 minidb/engine.py      Database: 외부가 쓰는 단일 진입점
@@ -38,8 +41,11 @@ docs/sql-grammar.md       지원 SQL 문법(BNF), 렉싱 규칙, PostgreSQL 과�
 docs/execution.md         파이프라인, 바인더 타입 규칙, NULL 의미론, 이터레이터 모델, 접근 경로, EXPLAIN, 락 지점
 docs/bptree.md            B+ 트리 구조, 분할, 벌크 로딩, 불변식, Phase 3 락 계획
 docs/phase2-report.md     인덱스 벤치마크 결과와 해석, order 선택 근거
+docs/server.md            서버 아키텍처, 요청 생명주기, 잠금 설계와 스냅샷 읽기, API, 한계, 정상 종료, 보안
+docs/phase3-report.md     서버 병렬 처리 성능 실험 (3.14.6 vs 3.14.6t vs 3.14.6t + PYTHON_GIL=1)
 scripts/gen_insert_sql.py 대량 INSERT 스크립트 생성, scripts/bench_e2e.py 종단 벤치마크
 scripts/bench_index.py    인덱스 벤치마크, scripts/demo_phase2.sql 인덱스 시연
+scripts/bench_server.py   서버 성능 실험 (loadgen.py 부하 생성기, plot_results.py SVG 그래프)
 ```
 
 ## 개발 환경
@@ -144,12 +150,63 @@ EXPLAIN ANALYZE SELECT * FROM users WHERE id = 777777;
 
 벤치마크 결과(두 빌드)와 해석은 docs/phase2-report.md: `WHERE id = N` 인덱스 켬 0.04 ms / 끔 1.9 초, `WHERE name = …` 1.9 초.
 
+## Phase 3: HTTP API 서버
+
+```sh
+# 서버 (기본 127.0.0.1:8080. 인증이 없으므로 외부에 노출하지 말 것)
+uv run --python 3.14.6t python -m minidb serve --db ./db --workers 8
+```
+
+```sh
+curl -s localhost:8080/health                        # {"status": "ok"}
+curl -s -X POST localhost:8080/query -H 'Content-Type: application/json' \
+     -d '{"sql": "INSERT INTO users (name, age) VALUES ('"'"'kim'"'"', 25) RETURNING *"}'
+curl -s -X POST localhost:8080/query -H 'Content-Type: text/plain' \
+     --data-binary 'SELECT * FROM users WHERE id = 1'
+# {"results": [{"command": "SELECT 1", "columns": [{"name": "id", "type": "bigint", "type_oid": 20}, ...],
+#               "rows": [[1, "kim", 25]], "row_count": 1}], "error": null}
+
+# SET 을 유지하려면 세션을 만들어 X-Session-Id 로 보낸다
+sid=$(curl -s -X POST localhost:8080/sessions | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')
+curl -s -X POST localhost:8080/query -H "X-Session-Id: $sid" -H 'Content-Type: text/plain' --data-binary 'SET enable_indexscan = off'
+curl -s -X DELETE localhost:8080/sessions/$sid
+curl -s localhost:8080/stats                         # 풀/연결 지표, 파이썬 빌드, GIL 상태
+```
+
+`curl --data-binary` 는 Content-Type 을 지정하지 않으면 `application/x-www-form-urlencoded` 를 보내므로 415 가 된다.
+`text/plain` 이나 `application/json` 을 지정한다.
+
+```sh
+# psql 형식으로 보여 주는 클라이언트 (문장마다 요청, 세션 하나로 SET 유지, 오류는 LINE/캐럿 형식)
+uv run --python 3.14.6t python -m minidb client --url http://127.0.0.1:8080 -c "SELECT * FROM users WHERE id >= 1 LIMIT 3"
+uv run --python 3.14.6t python -m minidb client --url http://127.0.0.1:8080 script.sql
+```
+
+SIGINT/SIGTERM 은 정상 종료(새 연결 중단 → 진행 중 요청 완료 → fsync), 두 번 보내면 즉시 종료. 설계는 docs/server.md.
+
+### 병렬 성능 (Apple M4: 성능 코어 4 + 효율 코어 6, 동시 요청 32, 3회 중앙값)
+
+| 워크로드 | 3.14.6 +GIL 최대 | 3.14.6t 최대 | 배율 |
+|---|---|---|---|
+| id 점 검색 | 6,316 req/s (워커 4, 1.39코어) | 22,332 req/s (워커 10, 6.40코어) | 3.5× |
+| Seq Scan 10만 건 | 5.5 req/s (워커 2, 1.01코어) | 21.2 req/s (워커 10, 9.70코어) | 3.9× |
+| INSERT | 6,609 req/s (워커 1, 1.13코어) | 17,578 req/s (워커 10, 7.00코어) | 2.7× |
+| 혼합 (읽기 90%) | 6,245 req/s (워커 2, 1.26코어) | 21,162 req/s (워커 10, 6.58코어) | 3.4× |
+
+GIL 빌드는 워커 수와 무관하게 평평하고, 3.14t 에 `PYTHON_GIL=1` 을 준 대조군도 GIL 빌드와 같다(차이는 GIL 때문).
+3.14t 는 성능 코어 4개까지 거의 선형이다. 표 전체와 해석은 docs/phase3-report.md.
+
+![점 검색](docs/images/phase3_point.svg)
+![Seq Scan](docs/images/phase3_scan.svg)
+
 ## 벤치마크
 
 ```sh
 uv run --python 3.14.6t python scripts/gen_insert_sql.py --rows 1000000 --batch 5000 --seed 42 --out data/users_1m.sql
 uv run --python 3.14.6t python scripts/bench_e2e.py --out results/e2e_3.14.6t.json
 uv run --python 3.14.6t python scripts/bench_index.py --out results/index_3.14.6t.json   # --fresh 면 적재부터 다시
+uv run --python 3.14.6+gil python scripts/bench_server.py        # 서버 실험 전체 (약 50분, results/server/)
+uv run --python 3.14.6+gil python scripts/plot_results.py        # docs/images/*.svg
 uv run --python 3.14.6t python scripts/bench_storage.py --rows 1000000 --db ./bench_db --seed 42 --out results/storage_3.14t.json
 uv run --python 3.14.6t python scripts/bench_parser.py --out results/parser_3.14t.json
 ```

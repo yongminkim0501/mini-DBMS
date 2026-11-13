@@ -1,4 +1,4 @@
-"""Database: 외부(CLI, 이후 Phase 3 서버)가 쓰는 단일 진입점.
+"""Database: 외부(CLI, Phase 3 HTTP 서버)가 쓰는 단일 진입점. **여러 스레드에서 동시에 써도 안전하다.**
 
 파이프라인::
 
@@ -9,18 +9,24 @@
 인덱스는 열 때의 파일 검증 스캔 한 번으로 벌크 로딩된다 (디스크에 저장하지 않는다).
 
 설정(``enable_indexscan`` 등)은 :class:`~minidb.session.Session` 에 있다. ``execute(sql, session)`` 에 세션을 넘기지 않으면
-Database 의 기본 세션을 쓴다. Phase 3 에서는 연결마다 Session 을 하나씩 만든다.
+Database 의 기본 세션(:attr:`Database.session`)을 쓴다. **세션은 스레드 안전하지 않다**: 여러 스레드에서 쓸 때는
+스레드(연결)마다 Session 을 넘긴다 (HTTP 서버는 요청 또는 HTTP 세션마다 하나).
 
-Phase 3 락 지점 (``# [LOCK]`` 주석):
-- 테이블 핸들 캐시 생성 (:meth:`Database.table_handle`): 두 스레드가 같은 테이블을 동시에 처음 열면 핸들이
-  두 개 생기고 각자 next_id 와 인덱스를 들고 append 해 id 가 겹친다 → 캐시 조회·생성은 락 안에서.
-- 카탈로그 reload (:meth:`Database.reload_catalog`): 읽는 스레드가 반쯤 갱신된 사전을 보면 안 된다.
-- 테이블마다 RW 락: SELECT(SeqScan, IndexScan 의 search/range + read_at)는 공유(read) 락,
-  INSERT(파일 append + 인덱스 insert 를 한 구간으로)와 인덱스 재구성은 배타(write) 락.
+락 (docs/server.md "잠금 설계"):
+- ``_tables_lock`` (일반 Lock): 테이블 핸들 캐시 생성. 이중 확인 패턴 — 이미 열린 핸들은 락 없이 dict 에서 꺼내고,
+  없을 때만 락을 잡고 다시 확인한 뒤 연다. 두 스레드가 같은 테이블을 동시에 처음 열어 핸들이 두 개 생기면
+  각자 next_id 와 인덱스를 들고 append 해 id 가 겹치므로, 생성은 반드시 락 안에서 한 번만.
+  (락 없는 조회는 dict 의 get 이 스레드 안전하다는 CPython 의 보장 — free-threaded 빌드에서는 dict 내부 락 — 에
+  기댄다. 핸들은 완전히 만든 뒤에만 dict 에 넣는다.)
+- 테이블마다 RW 락 (:class:`~minidb.table.TableHandle`): SELECT 는 스냅샷을 잡는 동안만 공유 락,
+  INSERT 는 파일 append + 인덱스 갱신 전체를 배타 락.
+- 카탈로그는 생성 시 한 번 로드한 뒤 바꾸지 않는다 (읽기 전용 → 락 불필요). :meth:`reload_catalog` 는 다른 스레드가
+  실행 중이 아닐 때만 부른다 (서버는 부르지 않는다).
 """
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Iterable, Iterator
 from pathlib import Path
@@ -60,14 +66,21 @@ class Database:
     """
 
     def __init__(
-        self, db_dir: str | Path, *, max_text_bytes: int = 1_048_576, index_order: int = DEFAULT_ORDER
+        self,
+        db_dir: str | Path,
+        *,
+        max_text_bytes: int = 1_048_576,
+        index_order: int = DEFAULT_ORDER,
+        lock_timeout: float | None = None,
     ) -> None:
         self.db_dir = Path(db_dir)
         self.max_text_bytes = max_text_bytes
         self.index_order = index_order
+        self.lock_timeout = lock_timeout
         self.catalog = Catalog(self.db_dir)
-        self.catalog.reload()  # 즉시 로드 (스키마 오류도 여기서 드러난다)
-        self._tables: dict[int, TableHandle] = {}
+        self.catalog.reload()  # 즉시 로드 (스키마 오류도 여기서 드러난다). 이후 읽기 전용.
+        self._tables_lock = threading.Lock()
+        self._tables: dict[int, TableHandle] = {}  # 쓰기는 _tables_lock 아래에서만
         self._closed = False
         #: ``execute`` 에 세션을 넘기지 않았을 때 쓰는 세션
         self.session = Session()
@@ -75,29 +88,36 @@ class Database:
     # ------------------------------------------------------------ 테이블
     def table_handle(self, schema: TableSchema) -> TableHandle:
         """테이블의 TableHandle(파일 + 인덱스)을 (처음이면 열어서) 반환한다."""
-        if self._closed:
-            raise ValueError("Database is closed")
-        # [LOCK] Phase 3: 캐시 조회와 생성을 한 임계 구역으로 (같은 테이블에 핸들이 두 개 생기면 id 가 겹친다).
-        h = self._tables.get(schema.oid)
-        if h is None:
-            h = TableHandle.open(
-                self.catalog.data_path(schema.name),
-                schema,
-                max_text_bytes=self.max_text_bytes,
-                order=self.index_order,
-            )
-            self._tables[schema.oid] = h
-        return h
+        h = self._tables.get(schema.oid)  # 빠른 경로: 이미 열린 핸들 (락 없이)
+        if h is not None:
+            return h
+        with self._tables_lock:  # [LOCK] 느린 경로: 다시 확인하고 한 번만 연다
+            if self._closed:
+                raise ValueError("Database is closed")
+            h = self._tables.get(schema.oid)
+            if h is None:
+                h = TableHandle.open(
+                    self.catalog.data_path(schema.name),
+                    schema,
+                    max_text_bytes=self.max_text_bytes,
+                    order=self.index_order,
+                    lock_timeout=self.lock_timeout,
+                )
+                self._tables[schema.oid] = h  # 완전히 만든 뒤에 공개
+            return h
 
     def table_file(self, schema: TableSchema) -> TableFile:
         """테이블의 TableFile (``table_handle(schema).file``)."""
         return self.table_handle(schema).file
 
     def reload_catalog(self) -> None:
-        """스키마 디렉터리를 다시 읽는다. 열린 TableFile 은 닫는다 (스키마가 바뀌었을 수 있으므로)."""
-        # [LOCK] Phase 3: 배타 락. 실행 중인 문장이 없을 때만 바꿔야 한다.
-        self.catalog.reload()
-        self._close_tables()
+        """스키마 디렉터리를 다시 읽는다. 열린 테이블은 닫는다 (스키마가 바뀌었을 수 있으므로).
+
+        다른 스레드가 문장을 실행 중이 아닐 때만 부른다 (카탈로그는 읽기 전용이라는 가정을 잠시 깬다).
+        """
+        with self._tables_lock:
+            self._close_tables_locked()
+            self.catalog.reload()
 
     # ------------------------------------------------------------ 실행
     def execute(self, sql: str, session: Session | None = None) -> Iterator[QueryResult | DatabaseError]:
@@ -174,22 +194,23 @@ class Database:
 
     # ------------------------------------------------------------ 수명
     def flush(self, *, durable: bool = False) -> None:
-        """열린 모든 TableFile 을 flush 한다 (``durable`` 이면 fsync)."""
-        # [LOCK:write] Phase 3: 테이블마다 배타 락 (쓰기 핸들 사용).
-        for h in self._tables.values():
-            h.flush(durable=durable)
+        """열린 모든 테이블을 flush 한다 (``durable`` 이면 fsync). 테이블마다 배타 락."""
+        with self._tables_lock:
+            handles = list(self._tables.values())
+        for h in handles:
+            h.flush(durable=durable)  # [LOCK:write]
 
-    def _close_tables(self) -> None:
+    def _close_tables_locked(self) -> None:
         tables, self._tables = self._tables, {}
         for h in tables.values():
-            h.close()
+            h.close()  # [LOCK:write] 진행 중인 INSERT 가 끝날 때까지 기다린다
 
     def close(self) -> None:
-        """모든 TableFile 을 닫는다. 여러 번 불러도 안전."""
-        # [LOCK] Phase 3: 엔진 배타 락 (실행 중인 문장이 없을 때만 닫는다).
-        if not self._closed:
-            self._close_tables()
-            self._closed = True
+        """모든 테이블을 닫는다. 여러 번 불러도 안전. 이후 새 문장은 ValueError."""
+        with self._tables_lock:
+            if not self._closed:
+                self._closed = True
+                self._close_tables_locked()
 
     def __enter__(self) -> Self:
         return self

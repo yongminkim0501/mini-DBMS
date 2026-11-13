@@ -5,6 +5,9 @@
     python -m minidb run <file.sql | -> --db <dir> [--on-error stop|continue] [--echo] [--timing] [--fsync] [--no-index]
     python -m minidb -c "<SQL>" --db <dir> [같은 옵션]
     python -m minidb dump <table> --db <dir> [--limit N]
+    python -m minidb serve --db <dir> [--host 127.0.0.1] [--port 8080] [--workers N] [--queue-size M]
+                           [--max-connections K] [--idle-timeout S] [--max-result-rows R]
+    python -m minidb client --url http://127.0.0.1:8080 [-c "<SQL>" | file.sql | -]
 
 - 스크립트는 UTF-8 로 읽고 ``-`` 면 표준 입력. 파일 전체를 메모리에 올리지 않고 문장 단위로 스트리밍한다.
 - 결과는 psql aligned 형식으로 표준 출력, 오류는 psql 형식(LINE/캐럿/DETAIL/HINT)으로 표준 오류.
@@ -96,6 +99,12 @@ def main(
         from .tools.dump import main as dump_main
 
         return dump_main(argv[1:])
+    if argv and argv[0] == "serve":
+        return _serve(argv[1:], out, err)
+    if argv and argv[0] == "client":
+        from .client import main as client_main
+
+        return client_main(argv[1:], stdin=stdin, stdout=out, stderr=err)
 
     try:
         if argv and argv[0] == "run":
@@ -182,6 +191,74 @@ def _print_result(result: QueryResult, out: TextIO) -> None:
     tag = result.command_tag
     if tag.startswith("INSERT"):
         print(tag, file=out)
+
+
+def _serve(argv: list[str], out: TextIO, err: TextIO) -> int:
+    """``serve``: HTTP API 서버 (docs/server.md). SIGINT/SIGTERM 으로 정상 종료."""
+    import os
+
+    from .server import Server, ServerConfig
+
+    d = ServerConfig()
+    p = argparse.ArgumentParser(
+        prog="python -m minidb serve",
+        description="HTTP API 서버. 인증이 없으므로 신뢰할 수 없는 네트워크에 노출하지 말 것 (기본 127.0.0.1).",
+    )
+    p.add_argument("--db", required=True, help="DB 디렉터리 (schema/, data/)")
+    p.add_argument("--host", default=d.host)
+    p.add_argument("--port", type=int, default=d.port, help="0 이면 임의의 빈 포트")
+    p.add_argument("--workers", type=int, default=os.cpu_count() or d.workers, help="워커 스레드 수 (기본: CPU 코어 수)")
+    p.add_argument("--queue-size", type=int, default=d.queue_size, help="대기 큐 길이 (차면 503)")
+    p.add_argument("--max-connections", type=int, default=d.max_connections)
+    p.add_argument("--idle-timeout", type=float, default=d.idle_timeout, help="유휴 keep-alive 연결 타임아웃 (초)")
+    p.add_argument("--request-timeout", type=float, default=d.request_timeout, help="요청 수신 타임아웃 (초)")
+    p.add_argument("--max-result-rows", type=int, default=d.max_result_rows)
+    p.add_argument("--max-body-bytes", type=int, default=d.max_body_bytes)
+    p.add_argument("--session-timeout", type=float, default=d.session_timeout)
+    p.add_argument("--lock-timeout", type=float, default=d.lock_timeout, help="락 대기 제한 (초)")
+    p.add_argument("--no-access-log", action="store_true", help="요청마다 남기는 접근 로그 끄기")
+    try:
+        a = p.parse_args(argv)
+    except SystemExit as exc:
+        return EXIT_USAGE if exc.code not in (0, None) else EXIT_OK
+    if not Path(a.db).is_dir():
+        print(f'minidb: database directory "{a.db}" does not exist', file=err)
+        return EXIT_USAGE
+    cfg = ServerConfig(
+        host=a.host,
+        port=a.port,
+        workers=a.workers,
+        queue_size=a.queue_size,
+        max_connections=a.max_connections,
+        idle_timeout=a.idle_timeout,
+        request_timeout=a.request_timeout,
+        max_result_rows=a.max_result_rows,
+        max_body_bytes=a.max_body_bytes,
+        session_timeout=a.session_timeout,
+        lock_timeout=a.lock_timeout,
+        access_log=not a.no_access_log,
+    )
+    try:
+        server = Server(a.db, cfg, log_stream=err)
+    except DatabaseError as exc:
+        print(format_error("", exc), file=err)
+        return EXIT_USAGE
+    except OSError as exc:
+        print(f"minidb: could not listen on {a.host}:{a.port}: {exc.strerror or exc}", file=err)
+        return EXIT_USAGE
+
+    def ready(s: Server) -> None:
+        info = s.stats()["runtime"]
+        print(
+            f"minidb: listening on {s.url} (workers={cfg.workers}, queue={cfg.queue_size}, "
+            f"python {info['python_version']}, free-threaded={info['free_threaded_build']}, "
+            f"GIL={'on' if info['gil_enabled'] else 'off'})",
+            file=err,
+            flush=True,
+        )
+
+    server.serve_forever(ready=ready)
+    return EXIT_OK
 
 
 if __name__ == "__main__":

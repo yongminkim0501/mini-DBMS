@@ -118,7 +118,7 @@ def choose_access_path(bound: BoundSelect, handle: TableHandle, session: Session
        - 점 (``id = c``) → 점 검색 Index Scan
        - 그 외 → 범위 Index Scan (empty 면 Index Scan 이지만 실행 시 아무것도 읽지 않는다)
     """
-    seq = SeqScan(handle.file, bound.table)
+    seq = SeqScan(handle, bound.table)
     if session is not None and not session.enable_indexscan:
         return seq
     if any(c.value is None for c in bound.where):

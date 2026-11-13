@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400" width="640" height="400" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12">
+<rect width="640" height="400" fill="#ffffff"/>
+<text x="320.0" y="24" text-anchor="middle" font-size="15" font-weight="600" fill="#111">(c) 단건 INSERT</text>
+<line x1="70" y1="310.0" x2="620" y2="310.0" stroke="#e5e7eb"/>
+<text x="62" y="314.0" text-anchor="end" fill="#374151">0</text>
+<line x1="70" y1="258.0" x2="620" y2="258.0" stroke="#e5e7eb"/>
+<text x="62" y="262.0" text-anchor="end" fill="#374151">4,000</text>
+<line x1="70" y1="206.0" x2="620" y2="206.0" stroke="#e5e7eb"/>
+<text x="62" y="210.0" text-anchor="end" fill="#374151">8,000</text>
+<line x1="70" y1="154.0" x2="620" y2="154.0" stroke="#e5e7eb"/>
+<text x="62" y="158.0" text-anchor="end" fill="#374151">12,000</text>
+<line x1="70" y1="102.0" x2="620" y2="102.0" stroke="#e5e7eb"/>
+<text x="62" y="106.0" text-anchor="end" fill="#374151">16,000</text>
+<line x1="70" y1="50.0" x2="620" y2="50.0" stroke="#e5e7eb"/>
+<text x="62" y="54.0" text-anchor="end" fill="#374151">20,000</text>
+<line x1="70.0" y1="310" x2="70.0" y2="315" stroke="#374151"/>
+<text x="70.0" y="330" text-anchor="middle" fill="#374151">1</text>
+<line x1="207.5" y1="310" x2="207.5" y2="315" stroke="#374151"/>
+<text x="207.5" y="330" text-anchor="middle" fill="#374151">2</text>
+<line x1="345.0" y1="310" x2="345.0" y2="315" stroke="#374151"/>
+<text x="345.0" y="330" text-anchor="middle" fill="#374151">4</text>
+<line x1="482.5" y1="310" x2="482.5" y2="315" stroke="#374151"/>
+<text x="482.5" y="330" text-anchor="middle" fill="#374151">8</text>
+<line x1="620.0" y1="310" x2="620.0" y2="315" stroke="#374151"/>
+<text x="620.0" y="330" text-anchor="middle" fill="#374151">10</text>
+<line x1="70" y1="310" x2="620" y2="310" stroke="#374151"/>
+<line x1="70" y1="50" x2="70" y2="310" stroke="#374151"/>
+<text x="345.0" y="350" text-anchor="middle" fill="#111">워커 수</text>
+<text x="18" y="180.0" text-anchor="middle" fill="#111" transform="rotate(-90 18 180.0)">처리량 (req/s, 3회 중앙값)</text>
+<polyline points="70.0,224.1 207.5,225.9 345.0,227.9 482.5,228.2 620.0,228.9" fill="none" stroke="#2563eb" stroke-width="2.5"/>
+<circle cx="70.0" cy="224.1" r="3.5" fill="#2563eb"/>
+<circle cx="207.5" cy="225.9" r="3.5" fill="#2563eb"/>
+<circle cx="345.0" cy="227.9" r="3.5" fill="#2563eb"/>
+<circle cx="482.5" cy="228.2" r="3.5" fill="#2563eb"/>
+<circle cx="620.0" cy="228.9" r="3.5" fill="#2563eb"/>
+<polyline points="70.0,185.2 207.5,121.4 345.0,82.0 482.5,116.0 620.0,81.5" fill="none" stroke="#dc2626" stroke-width="2.5"/>
+<circle cx="70.0" cy="185.2" r="3.5" fill="#dc2626"/>
+<circle cx="207.5" cy="121.4" r="3.5" fill="#dc2626"/>
+<circle cx="345.0" cy="82.0" r="3.5" fill="#dc2626"/>
+<circle cx="482.5" cy="116.0" r="3.5" fill="#dc2626"/>
+<circle cx="620.0" cy="81.5" r="3.5" fill="#dc2626"/>
+<polyline points="70.0,223.7 207.5,228.9 345.0,230.6 482.5,232.1 620.0,234.3" fill="none" stroke="#6b7280" stroke-width="2.5" stroke-dasharray="6 4"/>
+<circle cx="70.0" cy="223.7" r="3.5" fill="#6b7280"/>
+<circle cx="207.5" cy="228.9" r="3.5" fill="#6b7280"/>
+<circle cx="345.0" cy="230.6" r="3.5" fill="#6b7280"/>
+<circle cx="482.5" cy="232.1" r="3.5" fill="#6b7280"/>
+<circle cx="620.0" cy="234.3" r="3.5" fill="#6b7280"/>
+<line x1="70" y1="378" x2="94" y2="378" stroke="#2563eb" stroke-width="2.5"/>
+<text x="100" y="382" fill="#111">3.14.6 (GIL)</text>
+<line x1="220" y1="378" x2="244" y2="378" stroke="#dc2626" stroke-width="2.5"/>
+<text x="250" y="382" fill="#111">3.14.6t (free-threaded)</text>
+<line x1="458" y1="378" x2="482" y2="378" stroke="#6b7280" stroke-width="2.5" stroke-dasharray="6 4"/>
+<text x="488" y="382" fill="#111">3.14.6t + PYTHON_GIL=1</text>
+</svg>

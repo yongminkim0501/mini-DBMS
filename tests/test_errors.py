@@ -28,6 +28,10 @@ from minidb import errors as E
         (E.InvalidTextRepresentation, "22P02"),
         (E.UniqueViolation, "23505"),
         (E.UndefinedObject, "42704"),
+        (E.LockNotAvailable, "55P03"),
+        (E.TooManyConnections, "53300"),
+        (E.InsufficientResources, "53000"),
+        (E.QueryCanceled, "57014"),
     ],
 )
 def test_sqlstate_codes(cls, code):
