@@ -91,6 +91,7 @@ class Session:
 
     Args:
         **overrides: 시작 값 (예: ``Session(enable_indexscan=False)``). 알 수 없는 이름이면 UndefinedObject.
+            bool 이 아닌 값(``"off"``, ``0``)은 SET 과 같은 규칙으로 해석한다 (잘못된 값이면 InvalidParameterValue).
     """
 
     __slots__ = ("_values",)
@@ -98,7 +99,10 @@ class Session:
     def __init__(self, **overrides: Any) -> None:
         self._values: dict[str, Any] = {name: d.default for name, d in SETTINGS.items()}
         for name, value in overrides.items():
-            self._values[_lookup(name, None).name] = value
+            if isinstance(value, bool):
+                self._values[_lookup(name, None).name] = value
+            else:
+                self.set(name, value)
 
     # 플래너가 매 SELECT 마다 읽는 값은 속성으로 바로 꺼낸다.
     @property

@@ -48,6 +48,10 @@ def test_session_defaults_and_overrides():
     assert s2.enable_indexscan is False and s.enable_indexscan is True  # 세션끼리 독립
     with pytest.raises(UndefinedObject):
         Session(nope=1)
+    assert Session(enable_indexscan="off").enable_indexscan is False
+    assert Session(enable_indexscan=0).enable_indexscan is False
+    with pytest.raises(InvalidParameterValue):
+        Session(enable_indexscan="maybe")
 
 
 def test_session_set_values():
