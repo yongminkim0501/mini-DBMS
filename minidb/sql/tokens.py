@@ -35,7 +35,7 @@ class TokenType(Enum):
 RESERVED_KEYWORDS: frozenset[str] = frozenset(
     {
         "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "RETURNING", "LIMIT", "ALL", "AND", "NULL", "DEFAULT",
-        "EXPLAIN", "ANALYZE",
+        "EXPLAIN", "ANALYZE", "TO",
     }  # fmt: skip
 )
 

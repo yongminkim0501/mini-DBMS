@@ -3,7 +3,8 @@
 **이터레이터 모델**: 각 계획 노드는 ``__iter__`` 로 행을 하나씩 내보낸다. 상위 노드는 하위 노드에서 행을 *당겨(pull)*
 쓴다. 행은 필요할 때만 만들어지고 노드 사이를 하나씩 흘러간다::
 
-    Limit ──당김──▶ Project ──당김──▶ Filter ──당김──▶ SeqScan ──▶ TableFile.scan()
+    Limit ──당김──▶ Project ──당김──▶ Filter ──당김──▶ SeqScan   ──▶ TableFile.scan()
+                                                    └─ IndexScan ──▶ B+ 트리 search/range → TableFile.read_at()
 
 ``Limit`` 이 n 개를 내보낸 뒤 더 이상 당기지 않으면, 아래 노드의 제너레이터는 다음 행을 만들지 않고 멈춘 채로
 남는다. 그래서 100만 건 테이블의 ``LIMIT 10`` 은 10개(조건이 있으면 조건을 통과한 10개)를 찾을 만큼만 읽고 끝난다.
@@ -25,11 +26,13 @@ from .binder import BoundCondition
 from .catalog import BIGINT, TableSchema
 from .sql.ast import quote_ident, quote_literal
 from .storage import TableFile
+from .table import TableHandle
 
 __all__ = [
     "NodeStats",
     "PlanNode",
     "SeqScan",
+    "IndexScan",
     "Filter",
     "Project",
     "Limit",
@@ -125,6 +128,84 @@ class SeqScan(PlanNode):
                 yield row
         finally:
             scan.close()  # type: ignore[attr-defined]
+
+
+class IndexScan(PlanNode):
+    """id 인덱스(B+ 트리)로 찾은 offset 의 레코드만 ``TableFile.read_at`` 으로 읽는다.
+
+    - 점 검색 (``point`` 가 있으면): ``search(point)`` 한 번 → ``read_at`` 한 번 → 행 0~1 개.
+    - 범위 검색 (클러스터드 범위 스캔): 트리에서 **하한 이상인 첫 (id, offset)** 만 찾고, 거기서부터
+      ``TableFile.scan_from`` 으로 파일을 순차로 읽다가 id 가 상한을 넘으면 멈춘다. 파일 안의 id 는 엄격히 증가하므로
+      (열 때 판정 6, append 의 순차 id) offset 순서 = id 순서이고, 그래서 시작 위치 이후의 레코드는 id 순으로 이어진다.
+      행마다 랜덤 읽기(read_at)를 하지 않으므로 범위가 커져도 Seq Scan 보다 느려지지 않는다.
+      상위 Limit 이 멈추면 scan_from 제너레이터도 닫혀 더 이상 읽지 않는다.
+    - ``empty`` 면 (모순 조건, BIGINT 범위 밖 상수) 트리도 파일도 건드리지 않고 끝낸다.
+    결과는 id 오름차순이다 (파일 순서와 같다). 상위 Filter 가 id 조건을 포함한 모든 조건을 다시 검사한다.
+
+    Attributes:
+        index_conds: EXPLAIN 의 ``Index Cond:`` 에 표시할 원래 조건들 (병합 전, 원문 순서).
+        rows_fetched: 인덱스에서 찾아 실제로 읽은 행 수 (Rows Removed by Filter 계산용).
+    """
+
+    def __init__(
+        self,
+        handle: TableHandle,
+        schema: TableSchema,
+        *,
+        index_conds: Sequence[BoundCondition],
+        point: int | None = None,
+        lo: int | None = None,
+        lo_inclusive: bool = True,
+        hi: int | None = None,
+        hi_inclusive: bool = True,
+        empty: bool = False,
+    ) -> None:
+        super().__init__()
+        self.handle = handle
+        self.schema = schema
+        self.index_name = handle.index_name
+        self.index_conds = tuple(index_conds)
+        self.point = point
+        self.lo, self.lo_inclusive = lo, lo_inclusive
+        self.hi, self.hi_inclusive = hi, hi_inclusive
+        self.empty = empty
+        self.rows_fetched = 0
+
+    def _rows(self) -> Iterator[tuple[Any, ...]]:
+        if self.empty:
+            return
+        # [LOCK:read] Phase 3: 인덱스 조회와 read_at 은 테이블 공유 락 아래에서 (range 는 순회가 끝날 때까지).
+        index = self.handle.index
+        read_at = self.handle.file.read_at
+        if self.point is not None:
+            offset = index.search(self.point)
+            if offset is None:
+                return
+            row = read_at(offset)
+            if row is not None:
+                self.rows_fetched += 1
+                yield row
+            return
+        start = self._start_offset(index)
+        if start is None:
+            return
+        hi = self.hi
+        hi_inc = self.hi_inclusive
+        rows = self.handle.file.scan_from(start)
+        try:
+            for _offset, row in rows:
+                rid = row[0]
+                if hi is not None and (rid > hi or (rid == hi and not hi_inc)):
+                    return  # id 가 상한을 넘었다: 이후 레코드는 모두 더 크다
+                self.rows_fetched += 1
+                yield row
+        finally:
+            rows.close()  # type: ignore[attr-defined]
+
+    def _start_offset(self, index: Any) -> int | None:
+        """하한을 만족하는 첫 키의 offset (없거나 그 키가 이미 상한 밖이면 None)."""
+        first = next(index.range(self.lo, self.hi, self.lo_inclusive, self.hi_inclusive), None)
+        return None if first is None else first[1]
 
 
 class ValuesScan(PlanNode):
@@ -249,20 +330,20 @@ class Insert(PlanNode):
     """
 
     def __init__(
-        self, child: PlanNode, table_file: TableFile, schema: TableSchema, returning: Sequence[int] | None
+        self, child: PlanNode, handle: TableHandle, schema: TableSchema, returning: Sequence[int] | None
     ) -> None:
         super().__init__()
         self.child = child
         self.children = (child,)
-        self.table_file = table_file
+        self.handle = handle
         self.schema = schema
         self.returning = None if returning is None else tuple(returning)
         self.inserted = 0
 
     def _rows(self) -> Iterator[tuple[Any, ...]]:
         rows = list(self.child)
-        # [LOCK:write] Phase 3: 테이블 쓰기. TableFile.append_many 자체가 배타 락 구간이다.
-        placed = self.table_file.append_many(rows)
+        # [LOCK:write] Phase 3: 테이블 쓰기. 파일 append 와 인덱스 갱신이 한 배타 구간 (TableHandle.append_many).
+        placed = self.handle.append_many(rows)
         self.inserted = len(placed)
         if self.returning is None:
             return
@@ -328,12 +409,30 @@ def _render(node: PlanNode, depth: int, out: list[str], analyze: bool) -> None:
         while isinstance(scan, Project):
             scan = scan.child
         label = _label(scan)
-        details.append(f"Filter: {format_condition(node.conditions)}")
-        if analyze and isinstance(scan, SeqScan) and node.stats is not None:
-            details.append(f"Rows Removed by Filter: {scan.rows_scanned - node.stats.rows}")
+        conds = node.conditions
+        if isinstance(scan, IndexScan):
+            # 인덱스 조건은 Index Cond: 로, 나머지만 Filter: 로 (PostgreSQL 과 같은 모양).
+            # 실행 시 Filter 노드는 id 조건까지 모두 다시 검사하지만, 인덱스가 이미 보장한 조건이라 결과는 같다.
+            used = {id(c) for c in scan.index_conds}
+            details.append(f"Index Cond: {format_condition(scan.index_conds)}")
+            if scan.point is None:
+                details.append("Heap Fetch: sequential")
+            conds = tuple(c for c in conds if id(c) not in used)
+            fetched = scan.rows_fetched
+        else:
+            fetched = scan.rows_scanned if isinstance(scan, SeqScan) else None
+        if conds:
+            details.append(f"Filter: {format_condition(conds)}")
+            if analyze and fetched is not None and node.stats is not None:
+                details.append(f"Rows Removed by Filter: {fetched - node.stats.rows}")
         children = scan.children
     else:
         label = _label(node)
+        if isinstance(node, IndexScan):  # WHERE 가 있으면 보통 Filter 아래에 있다
+            if node.index_conds:
+                details.append(f"Index Cond: {format_condition(node.index_conds)}")
+            if node.point is None:
+                details.append("Heap Fetch: sequential")
 
     prefix = "" if depth == 0 else " " * (6 * (depth - 1) + 2) + "->  "
     out.append(prefix + label + _actual(stats))
@@ -346,6 +445,8 @@ def _render(node: PlanNode, depth: int, out: list[str], analyze: bool) -> None:
 def _label(node: PlanNode) -> str:
     if isinstance(node, SeqScan):
         return f"Seq Scan on {quote_ident(node.schema.name)}"
+    if isinstance(node, IndexScan):
+        return f"Index Scan using {quote_ident(node.index_name)} on {quote_ident(node.schema.name)}"
     if isinstance(node, Limit):
         return "Limit"
     if isinstance(node, Insert):

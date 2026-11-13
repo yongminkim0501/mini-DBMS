@@ -26,6 +26,8 @@ from minidb import errors as E
         (E.GeneratedAlways, "428C9"),
         (E.UndefinedFunction, "42883"),
         (E.InvalidTextRepresentation, "22P02"),
+        (E.UniqueViolation, "23505"),
+        (E.UndefinedObject, "42704"),
     ],
 )
 def test_sqlstate_codes(cls, code):

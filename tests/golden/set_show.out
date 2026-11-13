@@ -1,0 +1,61 @@
+ enable_indexscan 
+------------------
+ on
+(1 row)
+
+              QUERY PLAN              
+--------------------------------------
+ Index Scan using users_pkey on users
+   Index Cond: (id = 1)
+(2 rows)
+
+SET
+ enable_indexscan 
+------------------
+ off
+(1 row)
+
+     QUERY PLAN     
+--------------------
+ Seq Scan on users
+   Filter: (id = 1)
+(2 rows)
+
+SET
+              QUERY PLAN              
+--------------------------------------
+ Index Scan using users_pkey on users
+   Index Cond: (id = 1)
+(2 rows)
+
+SET
+ enable_indexscan 
+------------------
+ off
+(1 row)
+
+SET
+ enable_indexscan 
+------------------
+ on
+(1 row)
+
+ERROR:  unrecognized configuration parameter "enable_seqscan"
+LINE 14: SET enable_seqscan = off;
+             ^
+ERROR:  parameter "enable_indexscan" requires a Boolean value
+LINE 15: SET enable_indexscan = maybe;
+                                ^
+ERROR:  parameter "enable_indexscan" requires a Boolean value
+LINE 16: SET enable_indexscan = 2;
+                                ^
+ERROR:  unrecognized configuration parameter "work_mem"
+LINE 17: SHOW work_mem;
+              ^
+ERROR:  SET enable_indexscan takes only one argument
+LINE 18: SET enable_indexscan = on, off;
+                                  ^
+ERROR:  SHOW ALL is not supported
+LINE 19: SHOW ALL;
+              ^
+[exit 1]

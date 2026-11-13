@@ -21,6 +21,8 @@ __all__ = [
     "InsertStmt",
     "SelectStmt",
     "ExplainStmt",
+    "SetStmt",
+    "ShowStmt",
     "Statement",
     "COMPARISON_OPS",
     "quote_ident",
@@ -226,5 +228,42 @@ class ExplainStmt:
         return ("EXPLAIN ANALYZE " if self.analyze else "EXPLAIN ") + self.statement.to_sql()
 
 
+def _setting_name_sql(name: str) -> str:
+    return ".".join(quote_ident(part) for part in name.split("."))
+
+
+@dataclass(frozen=True, slots=True)
+class SetStmt:
+    """``SET [SESSION] name { = | TO } { value | DEFAULT }``.
+
+    Attributes:
+        name: 설정 이름 (비인용은 소문자로 접힌 값, 점으로 이은 이름은 ``a.b``). 대소문자 구분 없이 찾는 것은 세션이 한다.
+        value: 값 리터럴 (``on``/``off`` 같은 단어도 문자열 리터럴로 저장) 또는 ``Default``.
+        name_position: 이름의 위치 (비교 제외).
+    """
+
+    name: str
+    value: Literal | Default
+    position: int = field(default=0, compare=False, kw_only=True)
+    name_position: int = field(default=0, compare=False, kw_only=True)
+
+    def to_sql(self) -> str:
+        """정규화된 SQL 문자열 (값은 항상 ``=`` 와 문자열/정수 리터럴로 쓴다)."""
+        return f"SET {_setting_name_sql(self.name)} = {self.value.to_sql()}"
+
+
+@dataclass(frozen=True, slots=True)
+class ShowStmt:
+    """``SHOW name``."""
+
+    name: str
+    position: int = field(default=0, compare=False, kw_only=True)
+    name_position: int = field(default=0, compare=False, kw_only=True)
+
+    def to_sql(self) -> str:
+        """정규화된 SQL 문자열."""
+        return f"SHOW {_setting_name_sql(self.name)}"
+
+
 #: 파서가 반환하는 문장 노드
-type Statement = InsertStmt | SelectStmt | ExplainStmt
+type Statement = InsertStmt | SelectStmt | ExplainStmt | SetStmt | ShowStmt

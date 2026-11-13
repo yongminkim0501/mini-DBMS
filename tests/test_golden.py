@@ -43,6 +43,6 @@ def test_golden(name, tmp_path):
 def test_minimum_scenarios_present():
     required = {
         "basic", "multirow_returning", "null_default", "where_ops", "type_errors",
-        "continue_mixed", "korean", "explain", "quoted_tables",
+        "continue_mixed", "korean", "explain", "quoted_tables", "index_explain", "set_show", "no_index",
     }  # fmt: skip
     assert required <= set(CASES)

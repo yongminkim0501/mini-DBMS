@@ -1,0 +1,288 @@
+{
+  "benchmark": "index",
+  "timestamp": "2026-11-13T02:28:43+00:00",
+  "environment": {
+    "python_version": "3.14.6",
+    "sys_version": "3.14.6 free-threading build (main, Jul 23 2026, 14:34:05) [Clang 22.1.3 ]",
+    "free_threaded_build": true,
+    "gil_enabled": false,
+    "cpu_count": 10,
+    "platform": "macOS-15.1-arm64-arm-64bit-Mach-O"
+  },
+  "params": {
+    "rows": 1000000,
+    "lookups": 10000,
+    "scan_runs": 20,
+    "seed": 42,
+    "default_order": 128,
+    "repeat": 3
+  },
+  "results": {
+    "initial_load": null,
+    "build": {
+      "keys": 1000000,
+      "order": 128,
+      "open_verify_only_seconds": 0.7866542909760028,
+      "open_with_bulk_index_seconds": 0.9938246249221265,
+      "bulk_overhead_in_open_seconds": 0.20717033394612372,
+      "bulk_only_seconds": 0.17787729110568762,
+      "incremental_insert_seconds": 0.666848250082694,
+      "bulk_memory_bytes": 18188032,
+      "incremental_memory_bytes": 21960208,
+      "dict_memory_bytes": 41951320,
+      "bulk_stats": {
+        "keys": 1000000,
+        "order": 128,
+        "height": 3,
+        "nodes": 8772,
+        "leaves": 8696,
+        "internal_nodes": 76,
+        "leaf_fill_avg": 0.8984015639374425,
+        "leaf_fill_min": 0.5859375,
+        "internal_fill_avg": 0.893811677631579,
+        "internal_fill_min": 0.8671875
+      },
+      "incremental_stats": {
+        "keys": 1000000,
+        "order": 128,
+        "height": 3,
+        "nodes": 8772,
+        "leaves": 8696,
+        "internal_nodes": 76,
+        "leaf_fill_avg": 0.8984015639374425,
+        "leaf_fill_min": 0.5859375,
+        "internal_fill_avg": 0.893811677631579,
+        "internal_fill_min": 0.8671875
+      }
+    },
+    "point": {
+      "lookups": 10000,
+      "bptree_search_total_ms": 10.395416989922523,
+      "bptree_search_us_per_lookup": 1.0395416989922523,
+      "dict_get_total_ms": 3.282250021584332,
+      "dict_get_us_per_lookup": 0.3282250021584332,
+      "sql_id_eq_index_on": {
+        "runs": 10000,
+        "avg_ms": 0.046342032111715524,
+        "median_ms": 0.04600000102072954,
+        "min_ms": 0.04258297849446535,
+        "max_ms": 0.3002079902216792,
+        "avg_rows": 1.0
+      },
+      "sql_id_eq_index_off": {
+        "runs": 20,
+        "avg_ms": 1930.5983793572523,
+        "median_ms": 1891.5908960043453,
+        "min_ms": 1870.4316249350086,
+        "max_ms": 2302.449584007263,
+        "avg_rows": 1.0
+      },
+      "sql_name_eq": {
+        "runs": 20,
+        "avg_ms": 1930.9433062153403,
+        "median_ms": 1903.2804165035486,
+        "min_ms": 1879.3627090053633,
+        "max_ms": 2109.8679999122396,
+        "avg_rows": 1.0
+      }
+    },
+    "range": {
+      "note": "dict 는 키 순서를 유지하지 않아 범위 검색을 할 수 없다 (모든 키를 훑거나 정렬해야 함). B+ 트리는 하한 이상인 첫 키의 offset 을 O(log n) 에 찾고, 데이터 파일을 그 위치부터 순차로 읽는다 (클러스터드 범위 스캔, Heap Fetch: sequential).",
+      "heap_fetch": "sequential",
+      "10": {
+        "fraction": 1e-05,
+        "index_on": {
+          "runs": 50,
+          "avg_ms": 0.14280921313911676,
+          "median_ms": 0.1336249988526106,
+          "min_ms": 0.11820800136774778,
+          "max_ms": 0.5110420752316713,
+          "avg_rows": 10.0
+        },
+        "index_off": {
+          "runs": 10,
+          "avg_ms": 1954.1813165997155,
+          "median_ms": 1955.9032915276475,
+          "min_ms": 1928.0629999702796,
+          "max_ms": 1978.6014999262989,
+          "avg_rows": 10.0
+        },
+        "speedup": 13683.860261144784
+      },
+      "1000": {
+        "fraction": 0.001,
+        "index_on": {
+          "runs": 50,
+          "avg_ms": 2.239985705818981,
+          "median_ms": 2.217187487985939,
+          "min_ms": 2.1895829122513533,
+          "max_ms": 2.745875041000545,
+          "avg_rows": 1000.0
+        },
+        "index_off": {
+          "runs": 10,
+          "avg_ms": 1962.2055208077654,
+          "median_ms": 1959.023125062231,
+          "min_ms": 1924.0727910073474,
+          "max_ms": 2023.027417017147,
+          "avg_rows": 1000.0
+        },
+        "speedup": 875.990197486705
+      },
+      "100000": {
+        "fraction": 0.1,
+        "index_on": {
+          "runs": 10,
+          "avg_ms": 223.9352666772902,
+          "median_ms": 220.83289548754692,
+          "min_ms": 212.90883398614824,
+          "max_ms": 250.86866691708565,
+          "avg_rows": 100000.0
+        },
+        "index_off": {
+          "runs": 10,
+          "avg_ms": 2078.9859584881924,
+          "median_ms": 2096.3211045018397,
+          "min_ms": 1955.8385419659317,
+          "max_ms": 2223.4798750141636,
+          "avg_rows": 100000.0
+        },
+        "speedup": 9.283870242216866
+      },
+      "500000": {
+        "fraction": 0.5,
+        "index_on": {
+          "runs": 5,
+          "avg_ms": 1129.8847833881155,
+          "median_ms": 1104.2954169679433,
+          "min_ms": 1077.2737090010196,
+          "max_ms": 1220.0466659851372,
+          "avg_rows": 500000.0
+        },
+        "index_off": {
+          "runs": 5,
+          "avg_ms": 2042.3949080053717,
+          "median_ms": 2048.8937080372125,
+          "min_ms": 2024.1262499475852,
+          "max_ms": 2057.381374994293,
+          "avg_rows": 500000.0
+        },
+        "speedup": 1.8076134292922936
+      },
+      "900000": {
+        "fraction": 0.9,
+        "index_on": {
+          "runs": 5,
+          "avg_ms": 1954.0906835813075,
+          "median_ms": 1956.253584008664,
+          "min_ms": 1929.834209033288,
+          "max_ms": 1969.279041979462,
+          "avg_rows": 900000.0
+        },
+        "index_off": {
+          "runs": 5,
+          "avg_ms": 2137.158549996093,
+          "median_ms": 2136.27162494231,
+          "min_ms": 2127.8212079778314,
+          "max_ms": 2144.489834085107,
+          "avg_rows": 900000.0
+        },
+        "speedup": 1.0936844272136197
+      },
+      "1000000": {
+        "fraction": 1.0,
+        "index_on": {
+          "runs": 5,
+          "avg_ms": 2245.3141168225557,
+          "median_ms": 2198.5903750173748,
+          "min_ms": 2176.908374996856,
+          "max_ms": 2347.9562919819728,
+          "avg_rows": 1000000.0
+        },
+        "index_off": {
+          "runs": 5,
+          "avg_ms": 2185.4802751913667,
+          "median_ms": 2168.3420840417966,
+          "min_ms": 2161.3087500445545,
+          "max_ms": 2263.999291928485,
+          "avg_rows": 1000000.0
+        },
+        "speedup": 0.973351683319988
+      }
+    },
+    "orders": {
+      "16": {
+        "bulk_seconds": 0.22497358301188797,
+        "incremental_seconds": 0.9719951250590384,
+        "random_insert_300k_seconds": 0.4100200409302488,
+        "search_us_per_lookup": 1.3786216697189957,
+        "height": 6,
+        "nodes": 76534,
+        "memory_bytes": 36009408
+      },
+      "32": {
+        "bulk_seconds": 0.20215183298569173,
+        "incremental_seconds": 0.7570007080212235,
+        "random_insert_300k_seconds": 0.35205937502905726,
+        "search_us_per_lookup": 1.2024308391846716,
+        "height": 5,
+        "nodes": 36993,
+        "memory_bytes": 28070096
+      },
+      "64": {
+        "bulk_seconds": 0.18299583299085498,
+        "incremental_seconds": 0.7234858339652419,
+        "random_insert_300k_seconds": 0.32647999993059784,
+        "search_us_per_lookup": 1.0884520900435746,
+        "height": 4,
+        "nodes": 17854,
+        "memory_bytes": 22420624
+      },
+      "128": {
+        "bulk_seconds": 0.17691674991510808,
+        "incremental_seconds": 0.6631582920672372,
+        "random_insert_300k_seconds": 0.30663091607857496,
+        "search_us_per_lookup": 1.0350212501361966,
+        "height": 3,
+        "nodes": 8772,
+        "memory_bytes": 18188032
+      },
+      "256": {
+        "bulk_seconds": 0.17369287507608533,
+        "incremental_seconds": 0.6666110419901088,
+        "random_insert_300k_seconds": 0.3139031670289114,
+        "search_us_per_lookup": 1.0528504196554422,
+        "height": 3,
+        "nodes": 4368,
+        "memory_bytes": 17857992
+      },
+      "512": {
+        "bulk_seconds": 0.17352533305529505,
+        "incremental_seconds": 0.6816705419914797,
+        "random_insert_300k_seconds": 0.3292809589765966,
+        "search_us_per_lookup": 1.0234416695311666,
+        "height": 3,
+        "nodes": 2180,
+        "memory_bytes": 16864312
+      }
+    },
+    "split_policy": {
+      "rightmost_on": {
+        "insert_seconds": 0.667467207997106,
+        "memory_bytes": 21960208,
+        "leaf_fill_avg": 0.8984015639374425,
+        "internal_fill_avg": 0.893811677631579,
+        "height": 3,
+        "nodes": 8772
+      },
+      "rightmost_off": {
+        "insert_seconds": 0.7447844999842346,
+        "memory_bytes": 22374952,
+        "leaf_fill_avg": 0.5078328133125325,
+        "internal_fill_avg": 0.5007486979166667,
+        "height": 4,
+        "nodes": 15624
+      }
+    }
+  }
+}

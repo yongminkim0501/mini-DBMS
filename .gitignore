@@ -11,3 +11,4 @@ db/data/
 *.tbl
 data/
 bench_e2e_db/
+bench_index_db/

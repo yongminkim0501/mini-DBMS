@@ -2,13 +2,15 @@
 
 사용법::
 
-    python -m minidb run <file.sql | -> --db <dir> [--on-error stop|continue] [--echo] [--timing] [--fsync]
+    python -m minidb run <file.sql | -> --db <dir> [--on-error stop|continue] [--echo] [--timing] [--fsync] [--no-index]
     python -m minidb -c "<SQL>" --db <dir> [같은 옵션]
     python -m minidb dump <table> --db <dir> [--limit N]
 
 - 스크립트는 UTF-8 로 읽고 ``-`` 면 표준 입력. 파일 전체를 메모리에 올리지 않고 문장 단위로 스트리밍한다.
 - 결과는 psql aligned 형식으로 표준 출력, 오류는 psql 형식(LINE/캐럿/DETAIL/HINT)으로 표준 오류.
 - 종료 코드: 모두 성공 0, 문장 오류가 하나라도 있으면 1, 사용법/파일 오류 2.
+- 실행 전체가 세션 하나다. ``--no-index`` 는 시작 시 ``SET enable_indexscan = off`` 와 같다
+  (스크립트 안의 SET 으로 다시 켤 수 있다).
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from .engine import Database
 from .errors import DatabaseError
 from .formatter import format_table
 from .result import QueryResult
+from .session import Session
 from .sql.errorfmt import format_error
 from .sql.stream import ScriptStatement, iter_script_statements
 
@@ -55,6 +58,9 @@ def _common_options(p: argparse.ArgumentParser) -> None:
     p.add_argument("--echo", action="store_true", help="실행 전에 각 문장을 출력 (psql -e)")
     p.add_argument("--timing", action="store_true", help="문장마다 실행 시간 출력 (psql \\timing)")
     p.add_argument("--fsync", action="store_true", help="문장마다 데이터 파일을 fsync")
+    p.add_argument(
+        "--no-index", action="store_true", help="인덱스 사용 안 함 (시작 시 enable_indexscan = off)"
+    )
 
 
 def _run_parser() -> argparse.ArgumentParser:
@@ -140,12 +146,13 @@ def main(
 
 def _run(db: Database, statements: Iterator[ScriptStatement], args: argparse.Namespace, out: TextIO, err: TextIO) -> int:
     had_error = False
+    session = Session(enable_indexscan=not args.no_index)
     for st in statements:
         if args.echo:
             print(st.source.text, file=out)
         t0 = time.perf_counter()
         try:
-            result = db.execute_one(st.source)
+            result = db.execute_one(st.source, session)
             _print_result(result, out)  # SELECT 결과는 여기서 스트리밍으로 읽힌다 (읽는 중 오류도 잡는다)
         except DatabaseError as exc:
             had_error = True

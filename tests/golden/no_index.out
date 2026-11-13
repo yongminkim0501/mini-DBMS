@@ -1,0 +1,18 @@
+ enable_indexscan 
+------------------
+ off
+(1 row)
+
+INSERT 0 3
+     QUERY PLAN     
+--------------------
+ Seq Scan on users
+   Filter: (id = 2)
+(2 rows)
+
+ id | name | age 
+----+------+-----
+  2 | b    |    
+(1 row)
+
+[exit 0]
