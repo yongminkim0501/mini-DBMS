@@ -32,6 +32,7 @@ from .ast import (
     ExplainStmt,
     InsertStmt,
     Literal,
+    Param,
     QualifiedName,
     SelectStmt,
     SetStmt,
@@ -59,7 +60,7 @@ _UNSUPPORTED_STATEMENTS: frozenset[str] = frozenset(
 # 조건을 뒤집을 때 연산자 방향도 뒤집는다: 5 < age  ≡  age > 5
 _FLIP_OP: dict[str, str] = {"=": "=", "<>": "<>", "<": ">", "<=": ">=", ">": "<", ">=": "<="}
 _OP_TOKENS: dict[TokenType, str] = {T.EQ: "=", T.NE: "<>", T.LT: "<", T.LE: "<=", T.GT: ">", T.GE: ">="}
-_LITERAL_START = frozenset({T.INTEGER, T.STRING, T.MINUS})
+_LITERAL_START = frozenset({T.INTEGER, T.STRING, T.MINUS, T.PARAM})
 
 _JOIN_WORDS = frozenset({"join", "inner", "left", "right", "full", "cross", "natural"})
 _CLAUSE_WORDS: dict[str, str] = {
@@ -292,7 +293,7 @@ class _Parser:
             returning_positions=ret_pos,
         )
 
-    def _row(self) -> tuple[tuple[Literal | Default, ...], Token]:
+    def _row(self) -> tuple[tuple[Literal | Param | Default, ...], Token]:
         """row := '(' value {',' value} ')'   (행과 '(' 토큰을 반환)"""
         lp = self._expect(T.LPAREN)
         values = [self._value()]
@@ -302,12 +303,20 @@ class _Parser:
         self._expect(T.RPAREN)
         return tuple(values), lp
 
-    def _value(self) -> Literal | Default:
-        """value := literal | DEFAULT"""
+    def _value(self) -> Literal | Param | Default:
+        """value := literal | param | DEFAULT"""
         tok = self._peek()
         if self._is_keyword(tok, "DEFAULT"):
             self._advance()
             return Default(position=self._pos(tok))
+        return self._literal_or_param()
+
+    def _literal_or_param(self) -> Literal | Param:
+        """literal | param   (param := '$' n)"""
+        tok = self._peek()
+        if tok.type is T.PARAM:
+            self._advance()
+            return Param(tok.value, position=self._pos(tok))
         return self._literal()
 
     def _literal(self) -> Literal:
@@ -364,12 +373,15 @@ class _Parser:
 
         return SelectStmt(columns, table, tuple(where), limit, position=self._pos(start), column_positions=col_pos)
 
-    def _limit_count(self) -> int | None:
-        """LIMIT ( integer | ALL )  — ALL 은 None. 음수는 2201W."""
+    def _limit_count(self) -> int | Param | None:
+        """LIMIT ( integer | param | ALL )  — ALL 은 None. 음수는 2201W."""
         tok = self._peek()
         if self._is_keyword(tok, "ALL"):
             self._advance()
             return None
+        if tok.type is T.PARAM:
+            self._advance()
+            return Param(tok.value, position=self._pos(tok))
         if tok.type is T.INTEGER:
             self._advance()
             return tok.value
@@ -388,7 +400,7 @@ class _Parser:
             raise self._unsupported(_CLAUSE_WORDS[tok.value], tok)
 
     def _cond(self) -> Condition:
-        """cond := ident op literal | literal op ident
+        """cond := ident op ( literal | param ) | ( literal | param ) op ident
 
         "literal op ident" 는 "ident op' literal" 로 뒤집어 정규화한다 (예: 5 < age → age > 5).
         """
@@ -406,11 +418,11 @@ class _Parser:
             nxt = self._peek()
             if nxt.type is T.IDENT:
                 raise self._unsupported("comparison between two columns is not supported", nxt)
-            value = self._literal()
+            value = self._literal_or_param()
             return Condition(col.value, op, value, position=self._pos(col), op_position=self._pos(op_tok))
 
         if tok.type in _LITERAL_START or self._is_keyword(tok, "NULL"):
-            value = self._literal()
+            value = self._literal_or_param()
             op_tok = self._peek()
             op = self._op()
             col = self._ident()
