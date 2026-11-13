@@ -1,0 +1,25 @@
+{
+  "tps": 9571.686579,
+  "latency_avg_ms": 3.343,
+  "transactions": 95698.0,
+  "failed": 0.0,
+  "condition": "ft_gil1",
+  "workers": 1,
+  "workload": "mixed",
+  "mode": "prepared",
+  "rep": 1,
+  "clients": 32,
+  "threads": 4,
+  "duration_s": 10,
+  "server_cpu_cores": 1.1494935111384792,
+  "server_runtime": {
+    "python_version": "3.14.6",
+    "sys_version": "3.14.6 free-threading build (main, Jul 23 2026, 14:34:05) [Clang 22.1.3 ]",
+    "free_threaded_build": true,
+    "gil_enabled": true,
+    "cpu_count": 10,
+    "pid": 37071
+  },
+  "pgbench_version": "pgbench (PostgreSQL) 17.9 (Homebrew)",
+  "raw": "pgbench (17.9 (Homebrew), server 16.0)\ntransaction type: multiple scripts\nscaling factor: 1\nquery mode: prepared\nnumber of clients: 32\nnumber of threads: 4\nmaximum number of tries: 1\nduration: 10 s\nnumber of transactions actually processed: 95698\nnumber of failed transactions: 0 (0.000%)\nlatency average = 3.343 ms\ninitial connection time = 10.103 ms\ntps = 9571.686579 (without initial connection time)\nSQL script 1: /Users/yongmin/Desktop/mini-DBMS/scripts/pgbench/point.sql\n - weight: 9 (targets 90.0% of total)\n - 86207 transactions (90.1% of total, tps = 8622.399475)\n - number of failed transactions: 0 (0.000%)\n - latency average = 3.341 ms\n - latency stddev = 0.309 ms\nSQL script 2: /Users/yongmin/Desktop/mini-DBMS/scripts/pgbench/insert.sql\n - weight: 1 (targets 10.0% of total)\n - 9491 transactions (9.9% of total, tps = 949.287104)\n - number of failed transactions: 0 (0.000%)\n - latency average = 3.337 ms\n - latency stddev = 0.293 ms\n"
+}
