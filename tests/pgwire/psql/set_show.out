@@ -1,0 +1,45 @@
+ enable_indexscan 
+------------------
+ on
+(1 row)
+
+SET
+ enable_indexscan 
+------------------
+ off
+(1 row)
+
+SET
+ enable_indexscan 
+------------------
+ on
+(1 row)
+
+ server_version 
+----------------
+ 16.0
+(1 row)
+
+ DateStyle 
+-----------
+ ISO, MDY
+(1 row)
+
+ TimeZone 
+----------
+ UTC
+(1 row)
+
+ server_encoding 
+-----------------
+ UTF8
+(1 row)
+
+psql:<stdin>:10: ERROR:  parameter "server_version" cannot be changed
+psql:<stdin>:11: ERROR:  unrecognized configuration parameter "nope"
+LINE 1: SET nope = 1;
+            ^
+psql:<stdin>:12: ERROR:  parameter "enable_indexscan" requires a Boolean value
+LINE 1: SET enable_indexscan = maybe;
+                               ^
+exit=0

@@ -1,0 +1,30 @@
+INSERT 0 1
+psql:<stdin>:2: ERROR:  syntax error at or near "FORM"
+LINE 1: SELECT * FORM users;
+                 ^
+psql:<stdin>:5: ERROR:  operator does not exist: text = integer
+LINE 3:  WHERE name = 1;
+                    ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.
+psql:<stdin>:6: ERROR:  relation "nope" does not exist
+LINE 1: SELECT * FROM nope;
+                      ^
+psql:<stdin>:7: ERROR:  column "nope" does not exist
+LINE 1: SELECT nope FROM users;
+               ^
+psql:<stdin>:8: ERROR:  cannot insert a non-DEFAULT value into column "id"
+LINE 1: INSERT INTO users (id, name) VALUES (5, 'x');
+                                             ^
+DETAIL:  Column "id" is an identity column defined as GENERATED ALWAYS.
+psql:<stdin>:9: ERROR:  invalid input syntax for type bigint: "twelve"
+LINE 1: INSERT INTO users (name, age) VALUES ('a', 'twelve');
+                                                   ^
+psql:<stdin>:10: ERROR:  invalid input syntax for type bigint: "x"
+LINE 1: SELECT * FROM users WHERE name = '홍길동' AND age = 'x';
+                                                            ^
+ name 
+------
+ kim
+(1 row)
+
+exit=0

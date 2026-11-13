@@ -1,0 +1,12 @@
+SHOW enable_indexscan;
+SET enable_indexscan = off;
+SHOW enable_indexscan;
+SET enable_indexscan TO DEFAULT;
+SHOW ENABLE_INDEXSCAN;
+SHOW server_version;
+SHOW DateStyle;
+SHOW TimeZone;
+SHOW server_encoding;
+SET server_version = '1';
+SET nope = 1;
+SET enable_indexscan = maybe;

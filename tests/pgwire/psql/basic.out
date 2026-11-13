@@ -1,0 +1,43 @@
+INSERT 0 2
+ id | name | age 
+----+------+-----
+  3 | park |  47
+(1 row)
+
+INSERT 0 1
+ id | name 
+----+------
+  4 | choi
+(1 row)
+
+INSERT 0 1
+ id | name | age 
+----+------+-----
+  1 | kim  |  25
+  2 | lee  |  31
+  3 | park |  47
+  4 | choi |    
+(4 rows)
+
+ name | age 
+------+-----
+ lee  |  31
+ park |  47
+(2 rows)
+
+ id | name | age 
+----+------+-----
+  2 | lee  |  31
+(1 row)
+
+ id 
+----
+  2
+  3
+(2 rows)
+
+ id | name | age 
+----+------+-----
+(0 rows)
+
+exit=0

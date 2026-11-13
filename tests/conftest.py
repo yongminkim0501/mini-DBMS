@@ -18,6 +18,9 @@ def pytest_addoption(parser):
         default=1,
         help="stress 테스트의 스레드 수/반복 수 배율 (로컬에서 크기를 키울 때)",
     )
+    parser.addoption(
+        "--update-golden", action="store_true", default=False, help="psql 골든 출력 파일을 다시 쓴다"
+    )
 
 
 @pytest.fixture

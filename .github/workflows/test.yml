@@ -44,6 +44,22 @@ jobs:
           spec="${{ matrix.python }}"
           uv python install "${spec%+gil}"
 
+      - name: Install psql (PostgreSQL client, psql 호환 테스트용)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update -q
+            sudo apt-get install -y -q postgresql-client
+          else
+            brew install libpq
+            # libpq 는 keg-only 라 PATH 에 직접 넣는다
+            echo "$(brew --prefix libpq)/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Show psql version
+        shell: bash
+        run: psql --version
+
       - name: Show interpreter
         shell: bash
         run: |
@@ -65,6 +81,19 @@ jobs:
         run: |
           set -o pipefail
           uv run --python "${{ matrix.python }}" pytest -ra | tee pytest.log
+
+      - name: Verify psql compatibility tests actually ran
+        shell: bash
+        run: |
+          # psql 이 없으면 test_psql.py 는 건너뛰므로(로컬 편의), CI 에서는 건너뛰었으면 실패로 본다
+          if grep -E "SKIPPED.*test_psql" pytest.log; then
+            echo "::error::psql 호환 테스트가 건너뛰어졌다 (psql 이 PATH 에 없음)"; exit 1
+          fi
+          ran=$(uv run --python "${{ matrix.python }}" pytest tests/pgwire/test_psql.py -q 2>&1 | tail -1)
+          echo "$ran"
+          if ! grep -qE "^[0-9]+ passed" <<<"$ran" || grep -q skipped <<<"$ran"; then
+            echo "::error::psql 호환 테스트가 실행되지 않았다: $ran"; exit 1
+          fi
 
       - name: Verify interpreter build from pytest header
         shell: bash
