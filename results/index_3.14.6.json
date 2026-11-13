@@ -1,6 +1,6 @@
 {
   "benchmark": "index",
-  "timestamp": "2026-11-13T01:54:38+00:00",
+  "timestamp": "2026-11-13T02:24:37+00:00",
   "environment": {
     "python_version": "3.14.6",
     "sys_version": "3.14.6 (main, Jul 23 2026, 14:51:00) [Clang 22.1.3 ]",
@@ -18,19 +18,15 @@
     "repeat": 3
   },
   "results": {
-    "initial_load": {
-      "load_seconds": 15.010933791985735,
-      "rows": 1000000,
-      "rows_per_sec": 66618.10743139079
-    },
+    "initial_load": null,
     "build": {
       "keys": 1000000,
       "order": 128,
-      "open_verify_only_seconds": 0.7670396250905469,
-      "open_with_bulk_index_seconds": 0.9945927920052782,
-      "bulk_overhead_in_open_seconds": 0.22755316691473126,
-      "bulk_only_seconds": 0.1769322920590639,
-      "incremental_insert_seconds": 0.6656536660157144,
+      "open_verify_only_seconds": 0.7735230829566717,
+      "open_with_bulk_index_seconds": 0.99810837500263,
+      "bulk_overhead_in_open_seconds": 0.22458529204595834,
+      "bulk_only_seconds": 0.1817158330231905,
+      "incremental_insert_seconds": 0.6686133330222219,
       "bulk_memory_bytes": 18179216,
       "incremental_memory_bytes": 21951392,
       "dict_memory_bytes": 41943128,
@@ -61,146 +57,210 @@
     },
     "point": {
       "lookups": 10000,
-      "bptree_search_total_ms": 10.612832964397967,
-      "bptree_search_us_per_lookup": 1.0612832964397967,
-      "dict_get_total_ms": 3.409750061109662,
-      "dict_get_us_per_lookup": 0.3409750061109662,
+      "bptree_search_total_ms": 10.607584030367434,
+      "bptree_search_us_per_lookup": 1.0607584030367434,
+      "dict_get_total_ms": 2.9017499182373285,
+      "dict_get_us_per_lookup": 0.29017499182373285,
       "sql_id_eq_index_on": {
         "runs": 10000,
-        "avg_ms": 0.03916449572425336,
-        "median_ms": 0.03845803439617157,
-        "min_ms": 0.036334036849439144,
-        "max_ms": 0.5318749463185668,
+        "avg_ms": 0.040158696565777065,
+        "median_ms": 0.03933301195502281,
+        "min_ms": 0.03687490243464708,
+        "max_ms": 1.0174170602113008,
         "avg_rows": 1.0
       },
       "sql_id_eq_index_off": {
         "runs": 20,
-        "avg_ms": 1881.5050812379923,
-        "median_ms": 1848.1113124871626,
-        "min_ms": 1833.0273749306798,
-        "max_ms": 2028.4859579987824,
+        "avg_ms": 1870.4310435976367,
+        "median_ms": 1866.7100205202587,
+        "min_ms": 1837.619625031948,
+        "max_ms": 1955.2016250090674,
         "avg_rows": 1.0
       },
       "sql_name_eq": {
         "runs": 20,
-        "avg_ms": 1879.7305042098742,
-        "median_ms": 1853.2900210702792,
-        "min_ms": 1818.4542079688981,
-        "max_ms": 2248.1516669504344,
+        "avg_ms": 1881.2757605104707,
+        "median_ms": 1881.3306039664894,
+        "min_ms": 1859.9376670317724,
+        "max_ms": 1899.2795000085607,
         "avg_rows": 1.0
       }
     },
     "range": {
-      "note": "dict 는 키 순서를 유지하지 않아 범위 검색을 할 수 없다 (모든 키를 훑거나 정렬해야 함). B+ 트리는 시작 리프를 O(log n) 에 찾은 뒤 리프 연결 리스트를 따라간다.",
+      "note": "dict 는 키 순서를 유지하지 않아 범위 검색을 할 수 없다 (모든 키를 훑거나 정렬해야 함). B+ 트리는 하한 이상인 첫 키의 offset 을 O(log n) 에 찾고, 데이터 파일을 그 위치부터 순차로 읽는다 (클러스터드 범위 스캔, Heap Fetch: sequential).",
+      "heap_fetch": "sequential",
       "10": {
+        "fraction": 1e-05,
         "index_on": {
           "runs": 50,
-          "avg_ms": 0.10787572944536805,
-          "median_ms": 0.10075001046061516,
-          "min_ms": 0.08533289656043053,
-          "max_ms": 0.3813749644905329,
+          "avg_ms": 0.12564162025228143,
+          "median_ms": 0.11825002729892731,
+          "min_ms": 0.10691606439650059,
+          "max_ms": 0.4000409971922636,
           "avg_rows": 10.0
         },
         "index_off": {
           "runs": 10,
-          "avg_ms": 1960.8115622657351,
-          "median_ms": 1929.5893744565547,
-          "min_ms": 1900.6013330072165,
-          "max_ms": 2151.7532089492306,
+          "avg_ms": 1945.5417123856023,
+          "median_ms": 1922.1234375145286,
+          "min_ms": 1882.583957980387,
+          "max_ms": 2068.2101249694824,
           "avg_rows": 10.0
         },
-        "speedup": 18176.57755221722
+        "speedup": 15484.850549356672
       },
       "1000": {
+        "fraction": 0.001,
         "index_on": {
           "runs": 50,
-          "avg_ms": 3.166814164724201,
-          "median_ms": 3.1591870356351137,
-          "min_ms": 3.121832967735827,
-          "max_ms": 3.5297920694574714,
+          "avg_ms": 2.2099966160021722,
+          "median_ms": 2.195417007897049,
+          "min_ms": 2.164958044886589,
+          "max_ms": 2.5963750667870045,
           "avg_rows": 1000.0
         },
         "index_off": {
           "runs": 10,
-          "avg_ms": 1992.165325093083,
-          "median_ms": 1953.9736669976264,
-          "min_ms": 1907.4057079851627,
-          "max_ms": 2243.460000026971,
+          "avg_ms": 1966.5299333049916,
+          "median_ms": 1927.2688130149618,
+          "min_ms": 1876.1912080226466,
+          "max_ms": 2155.3070419467986,
           "avg_rows": 1000.0
         },
-        "speedup": 629.0755382125751
+        "speedup": 889.8339115389209
       },
       "100000": {
+        "fraction": 0.1,
         "index_on": {
           "runs": 10,
-          "avg_ms": 318.99132918333635,
-          "median_ms": 315.79045846592635,
-          "min_ms": 313.8004159554839,
-          "max_ms": 348.0815419461578,
+          "avg_ms": 235.82533759763464,
+          "median_ms": 229.63620902737603,
+          "min_ms": 221.47983394097537,
+          "max_ms": 277.81587501522154,
           "avg_rows": 100000.0
         },
         "index_off": {
           "runs": 10,
-          "avg_ms": 1986.429683410097,
-          "median_ms": 1957.8126040287316,
-          "min_ms": 1925.9276250377297,
-          "max_ms": 2101.682833977975,
+          "avg_ms": 2023.2500709942542,
+          "median_ms": 1969.8546460131183,
+          "min_ms": 1942.6703749923036,
+          "max_ms": 2233.1059999996796,
           "avg_rows": 100000.0
         },
-        "speedup": 6.227221562716586
+        "speedup": 8.579443123479484
+      },
+      "500000": {
+        "fraction": 0.5,
+        "index_on": {
+          "runs": 5,
+          "avg_ms": 1077.7610666118562,
+          "median_ms": 1076.2168749934062,
+          "min_ms": 1074.1549999220297,
+          "max_ms": 1082.0072500500828,
+          "avg_rows": 500000.0
+        },
+        "index_off": {
+          "runs": 5,
+          "avg_ms": 2024.4765334296972,
+          "median_ms": 2023.4156660735607,
+          "min_ms": 2013.1542090093717,
+          "max_ms": 2041.3942920276895,
+          "avg_rows": 500000.0
+        },
+        "speedup": 1.878409413873168
+      },
+      "900000": {
+        "fraction": 0.9,
+        "index_on": {
+          "runs": 5,
+          "avg_ms": 2000.528333405964,
+          "median_ms": 1965.40254203137,
+          "min_ms": 1952.4049579631537,
+          "max_ms": 2072.2546249162406,
+          "avg_rows": 900000.0
+        },
+        "index_off": {
+          "runs": 5,
+          "avg_ms": 2143.7028663698584,
+          "median_ms": 2133.3672079490498,
+          "min_ms": 2112.4200830236077,
+          "max_ms": 2178.544249967672,
+          "avg_rows": 900000.0
+        },
+        "speedup": 1.0715683605041149
+      },
+      "1000000": {
+        "fraction": 1.0,
+        "index_on": {
+          "runs": 5,
+          "avg_ms": 2173.0210750130937,
+          "median_ms": 2157.7447920572013,
+          "min_ms": 2156.2736670020968,
+          "max_ms": 2229.357457952574,
+          "avg_rows": 1000000.0
+        },
+        "index_off": {
+          "runs": 5,
+          "avg_ms": 2173.05245839525,
+          "median_ms": 2141.1472919862717,
+          "min_ms": 2122.600584058091,
+          "max_ms": 2304.736915975809,
+          "avg_rows": 1000000.0
+        },
+        "speedup": 1.0000144422815394
       }
     },
     "orders": {
       "16": {
-        "bulk_seconds": 0.2969080420443788,
-        "incremental_seconds": 0.8690059169894084,
-        "random_insert_300k_seconds": 0.40490166703239083,
-        "search_us_per_lookup": 1.3447791698854417,
+        "bulk_seconds": 0.28064229199662805,
+        "incremental_seconds": 0.8579569169087335,
+        "random_insert_300k_seconds": 0.411887124995701,
+        "search_us_per_lookup": 1.2664654199033976,
         "height": 6,
         "nodes": 76534,
         "memory_bytes": 35960360
       },
       "32": {
-        "bulk_seconds": 0.19532633305061609,
-        "incremental_seconds": 0.7620169998845086,
-        "random_insert_300k_seconds": 0.35813995893113315,
-        "search_us_per_lookup": 1.1288099992088974,
+        "bulk_seconds": 0.1931272919755429,
+        "incremental_seconds": 0.7575635000830516,
+        "random_insert_300k_seconds": 0.34867162501905113,
+        "search_us_per_lookup": 1.1651254200842232,
         "height": 5,
         "nodes": 36993,
         "memory_bytes": 28051664
       },
       "64": {
-        "bulk_seconds": 0.17855566600337625,
-        "incremental_seconds": 0.7262627920135856,
-        "random_insert_300k_seconds": 0.32698466698639095,
-        "search_us_per_lookup": 1.0896729200612754,
+        "bulk_seconds": 0.17475354194175452,
+        "incremental_seconds": 0.7427753750234842,
+        "random_insert_300k_seconds": 0.32908858300652355,
+        "search_us_per_lookup": 1.3888166705146432,
         "height": 4,
         "nodes": 17854,
         "memory_bytes": 22409936
       },
       "128": {
-        "bulk_seconds": 0.1801109160296619,
-        "incremental_seconds": 0.6737364999717101,
-        "random_insert_300k_seconds": 0.3164678330067545,
-        "search_us_per_lookup": 0.890318340389058,
+        "bulk_seconds": 0.1781639999244362,
+        "incremental_seconds": 0.6910557079827413,
+        "random_insert_300k_seconds": 0.3193907090462744,
+        "search_us_per_lookup": 1.1583124997559935,
         "height": 3,
         "nodes": 8772,
         "memory_bytes": 18179216
       },
       "256": {
-        "bulk_seconds": 0.1690487500745803,
-        "incremental_seconds": 0.6589633750263602,
-        "random_insert_300k_seconds": 0.3140189169207588,
-        "search_us_per_lookup": 0.9811637492384762,
+        "bulk_seconds": 0.16582383308559656,
+        "incremental_seconds": 0.6550285420380533,
+        "random_insert_300k_seconds": 0.31864941702224314,
+        "search_us_per_lookup": 0.9446824993938208,
         "height": 3,
         "nodes": 4368,
         "memory_bytes": 17849624
       },
       "512": {
-        "bulk_seconds": 0.16731995798181742,
-        "incremental_seconds": 0.6916009170236066,
-        "random_insert_300k_seconds": 0.33262300002388656,
-        "search_us_per_lookup": 1.0151449998375028,
+        "bulk_seconds": 0.16864770906977355,
+        "incremental_seconds": 0.6688516669673845,
+        "random_insert_300k_seconds": 0.32844824995845556,
+        "search_us_per_lookup": 1.0199666698463261,
         "height": 3,
         "nodes": 2180,
         "memory_bytes": 16856056
@@ -208,7 +268,7 @@
     },
     "split_policy": {
       "rightmost_on": {
-        "insert_seconds": 0.6711252079112455,
+        "insert_seconds": 0.6668117500375956,
         "memory_bytes": 21951392,
         "leaf_fill_avg": 0.8984015639374425,
         "internal_fill_avg": 0.893811677631579,
@@ -216,7 +276,7 @@
         "nodes": 8772
       },
       "rightmost_off": {
-        "insert_seconds": 0.7558105000061914,
+        "insert_seconds": 0.7584769999375567,
         "memory_bytes": 22364824,
         "leaf_fill_avg": 0.5078328133125325,
         "internal_fill_avg": 0.5007486979166667,

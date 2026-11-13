@@ -290,20 +290,29 @@ def main() -> int:
         print("\n== 3. range scan ==")
         rng_res: dict[str, Any] = {
             "note": "dict 는 키 순서를 유지하지 않아 범위 검색을 할 수 없다 (모든 키를 훑거나 정렬해야 함). "
-            "B+ 트리는 시작 리프를 O(log n) 에 찾은 뒤 리프 연결 리스트를 따라간다."
+            "B+ 트리는 하한 이상인 첫 키의 offset 을 O(log n) 에 찾고, 데이터 파일을 그 위치부터 순차로 읽는다 "
+            "(클러스터드 범위 스캔, Heap Fetch: sequential).",
+            "heap_fetch": "sequential"
         }
-        for size in (10, 1_000, 100_000):
-            runs_on = 50 if size < 100_000 else 10
-            runs_off = min(args.scan_runs, 10)
+        # 범위 Index Scan 은 트리로 시작 offset 만 찾고 파일을 순차로 읽는다 (클러스터드 범위 스캔).
+        # 전체의 50/90/100% 범위로 "범위가 크면 Seq Scan 보다 느려지는가"(이전 방식의 역전)를 확인한다.
+        for size in (10, 1_000, 100_000, n // 2, n * 9 // 10, n):
+            runs_on = 50 if size <= 1_000 else 10 if size <= 100_000 else 5
+            runs_off = min(args.scan_runs, 10 if size <= 100_000 else 5)
             qs = []
             for _ in range(max(runs_on, runs_off)):
-                lo = rng.randint(1, n - size)
+                lo = rng.randint(1, n - size + 1)
                 qs.append(f"SELECT * FROM users WHERE id >= {lo} AND id < {lo + size}")
             s_on, rows_on = run_queries(db, qs[:runs_on], on)
             s_off, rows_off = run_queries(db, qs[:runs_off], off)
             assert rows_on == rows_off == size
-            rng_res[str(size)] = {"index_on": s_on, "index_off": s_off, "speedup": s_off["avg_ms"] / s_on["avg_ms"]}
-            print(f"  {size:>7,} rows: on avg {s_on['avg_ms']:9.3f} ms | off avg {s_off['avg_ms']:9.1f} ms | "
+            rng_res[str(size)] = {
+                "fraction": size / n,
+                "index_on": s_on,
+                "index_off": s_off,
+                "speedup": s_off["avg_ms"] / s_on["avg_ms"],
+            }
+            print(f"  {size:>9,} rows ({size / n:6.1%}): on avg {s_on['avg_ms']:9.3f} ms | off avg {s_off['avg_ms']:9.1f} ms | "
                   f"{s_off['avg_ms'] / s_on['avg_ms']:,.1f}x")  # fmt: skip
         results["range"] = rng_res
 
