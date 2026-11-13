@@ -133,9 +133,12 @@ class SeqScan(PlanNode):
 class IndexScan(PlanNode):
     """id 인덱스(B+ 트리)로 찾은 offset 의 레코드만 ``TableFile.read_at`` 으로 읽는다.
 
-    - 점 검색 (``point`` 가 있으면): ``search(point)`` 한 번 → 행 0~1 개.
-    - 범위 검색: ``range(lo, hi, ...)`` 로 리프를 따라가며 offset 마다 행을 하나씩 읽어 내보낸다 (이터레이터).
-      상위 Limit 이 멈추면 range 제너레이터도 닫혀 더 이상 리프를 읽지 않는다.
+    - 점 검색 (``point`` 가 있으면): ``search(point)`` 한 번 → ``read_at`` 한 번 → 행 0~1 개.
+    - 범위 검색 (클러스터드 범위 스캔): 트리에서 **하한 이상인 첫 (id, offset)** 만 찾고, 거기서부터
+      ``TableFile.scan_from`` 으로 파일을 순차로 읽다가 id 가 상한을 넘으면 멈춘다. 파일 안의 id 는 엄격히 증가하므로
+      (열 때 판정 6, append 의 순차 id) offset 순서 = id 순서이고, 그래서 시작 위치 이후의 레코드는 id 순으로 이어진다.
+      행마다 랜덤 읽기(read_at)를 하지 않으므로 범위가 커져도 Seq Scan 보다 느려지지 않는다.
+      상위 Limit 이 멈추면 scan_from 제너레이터도 닫혀 더 이상 읽지 않는다.
     - ``empty`` 면 (모순 조건, BIGINT 범위 밖 상수) 트리도 파일도 건드리지 않고 끝낸다.
     결과는 id 오름차순이다 (파일 순서와 같다). 상위 Filter 가 id 조건을 포함한 모든 조건을 다시 검사한다.
 
@@ -183,15 +186,26 @@ class IndexScan(PlanNode):
                 self.rows_fetched += 1
                 yield row
             return
-        entries = index.range(self.lo, self.hi, self.lo_inclusive, self.hi_inclusive)
+        start = self._start_offset(index)
+        if start is None:
+            return
+        hi = self.hi
+        hi_inc = self.hi_inclusive
+        rows = self.handle.file.scan_from(start)
         try:
-            for _key, offset in entries:
-                row = read_at(offset)
-                if row is not None:
-                    self.rows_fetched += 1
-                    yield row
+            for _offset, row in rows:
+                rid = row[0]
+                if hi is not None and (rid > hi or (rid == hi and not hi_inc)):
+                    return  # id 가 상한을 넘었다: 이후 레코드는 모두 더 크다
+                self.rows_fetched += 1
+                yield row
         finally:
-            entries.close()  # type: ignore[attr-defined]
+            rows.close()  # type: ignore[attr-defined]
+
+    def _start_offset(self, index: Any) -> int | None:
+        """하한을 만족하는 첫 키의 offset (없거나 그 키가 이미 상한 밖이면 None)."""
+        first = next(index.range(self.lo, self.hi, self.lo_inclusive, self.hi_inclusive), None)
+        return None if first is None else first[1]
 
 
 class ValuesScan(PlanNode):
@@ -401,6 +415,8 @@ def _render(node: PlanNode, depth: int, out: list[str], analyze: bool) -> None:
             # 실행 시 Filter 노드는 id 조건까지 모두 다시 검사하지만, 인덱스가 이미 보장한 조건이라 결과는 같다.
             used = {id(c) for c in scan.index_conds}
             details.append(f"Index Cond: {format_condition(scan.index_conds)}")
+            if scan.point is None:
+                details.append("Heap Fetch: sequential")
             conds = tuple(c for c in conds if id(c) not in used)
             fetched = scan.rows_fetched
         else:
@@ -412,8 +428,11 @@ def _render(node: PlanNode, depth: int, out: list[str], analyze: bool) -> None:
         children = scan.children
     else:
         label = _label(node)
-        if isinstance(node, IndexScan) and node.index_conds:  # WHERE 가 있으면 보통 Filter 아래에 있다
-            details.append(f"Index Cond: {format_condition(node.index_conds)}")
+        if isinstance(node, IndexScan):  # WHERE 가 있으면 보통 Filter 아래에 있다
+            if node.index_conds:
+                details.append(f"Index Cond: {format_condition(node.index_conds)}")
+            if node.point is None:
+                details.append("Heap Fetch: sequential")
 
     prefix = "" if depth == 0 else " " * (6 * (depth - 1) + 2) + "->  "
     out.append(prefix + label + _actual(stats))

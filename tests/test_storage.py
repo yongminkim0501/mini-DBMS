@@ -881,3 +881,121 @@ def test_on_entry_exception_propagates(path):
 
     with pytest.raises(RuntimeError, match="stop"):
         TableFile(path, USERS, on_entry=boom)
+
+
+# ------------------------------------------------------------------ scan_from (클러스터드 범위 스캔)
+
+
+def five(path):
+    t = TableFile(path, USERS)
+    res = t.append_many([(f"r{i}", i) for i in range(1, 6)])
+    return t, res
+
+
+def test_scan_from_first_and_middle(path):
+    t, res = five(path)
+    with t:
+        assert [r[0] for _, r in t.scan_from(res[0][1])] == [1, 2, 3, 4, 5]
+        assert [r[0] for _, r in t.scan_from(res[2][1])] == [3, 4, 5]
+        assert [(off, r[0]) for off, r in t.scan_from(res[1][1])] == [(o, i) for i, o in res[1:]]
+        # scan() 은 scan_from(첫 레코드 위치) 와 같다
+        assert list(t.scan()) == list(t.scan_from(HEADER_SIZE))
+
+
+def test_scan_from_last_record(path):
+    t, res = five(path)
+    with t:
+        assert [r[0] for _, r in t.scan_from(res[4][1])] == [5]
+
+
+@pytest.mark.parametrize("which", [1, 2, 3, 4])
+def test_scan_from_end_boundary(path, which):
+    """end_offset 이 레코드 경계면 그 직전 레코드까지, 그 레코드 시작은 미포함."""
+    t, res = five(path)
+    with t:
+        end = res[which][1]
+        assert [r[0] for _, r in t.scan_from(res[0][1], end)] == list(range(1, which + 1))
+        assert [r[0] for _, r in t.scan(end)] == list(range(1, which + 1))
+        # end 를 한 바이트 넘기면(다음 레코드 중간) 그 레코드에서 손상으로 보고
+        with pytest.raises(DataCorrupted, match="incomplete record"):
+            list(t.scan_from(res[0][1], end + 1))
+        # 시작 == 끝 → 빈 구간
+        assert list(t.scan_from(end, end)) == []
+
+
+def test_scan_from_end_equals_file_end(path):
+    t, res = five(path)
+    with t:
+        assert [r[0] for _, r in t.scan_from(res[3][1], t.size)] == [4, 5]
+        assert list(t.scan_from(t.size)) == []  # 파일 끝에서 시작 = 빈 구간
+        with pytest.raises(ValueError, match="out of range"):
+            t.scan_from(res[0][1], t.size + 1)
+
+
+def test_scan_from_empty_table(path):
+    with TableFile(path, USERS) as t:
+        assert list(t.scan_from(HEADER_SIZE)) == []
+        assert list(t.scan()) == []
+
+
+@pytest.mark.parametrize("delta", [1, 5, RH])
+def test_scan_from_non_boundary_raises_eagerly(path, delta):
+    t, res = five(path)
+    with t:
+        off = res[2][1] + delta
+        with pytest.raises(DataCorrupted, match="not a valid record boundary") as e1:
+            t.scan_from(off)  # next() 전에, 호출 즉시
+        with pytest.raises(DataCorrupted, match="not a valid record boundary") as e2:
+            t.read_at(off)
+        assert str(e1.value) == str(e2.value)  # read_at 과 같은 오류
+
+
+@pytest.mark.parametrize("bad", [0, HEADER_SIZE - 1, -1, "16", 16.0])
+def test_scan_from_invalid_offset(path, bad):
+    t, _ = five(path)
+    with t:
+        with pytest.raises(ValueError):
+            t.scan_from(bad)
+        with pytest.raises(ValueError):
+            t.read_at(bad)
+
+
+def test_scan_from_beyond_end_raises(path):
+    t, _ = five(path)
+    with t:
+        with pytest.raises(ValueError, match="out of range"):
+            t.scan_from(t.size + 12)
+
+
+def test_scan_from_skips_deleted(path):
+    with TableFile(path, USERS) as t:
+        res = t.append_many([("a", 1), ("b", 2), ("c", 3)])
+    off = res[1][1]
+    _, body = record_at(path.read_bytes(), off)
+    rewrite_record(path, off, bytes([body[0] | FLAG_DELETED]) + body[1:])
+    with TableFile(path, USERS) as t:
+        assert [r[0] for _, r in t.scan_from(res[0][1])] == [1, 3]
+        # 삭제 레코드에서 시작해도 경계는 맞으므로 허용되고, 그 레코드는 건너뛴다
+        assert [r[0] for _, r in t.scan_from(off)] == [3]
+
+
+def test_scan_from_snapshot_and_no_state_change(path):
+    t, res = five(path)
+    with t:
+        before = _state(t)
+        it = t.scan_from(res[1][1])
+        assert next(it)[1][0] == 2
+        t.append(("late", 99))  # 생성 뒤 append 는 보이지 않는다 (생성 시점의 끝까지만)
+        assert [r[0] for _, r in it] == [3, 4, 5]
+        assert [r[0] for _, r in t.scan_from(res[1][1])][-1] == 6
+        t2_state = _state(t)
+        assert t2_state != before  # append 는 상태를 바꾸지만
+        list(t.scan_from(res[0][1]))
+        assert _state(t) == t2_state  # 읽기는 바꾸지 않는다
+
+
+def test_scan_from_on_closed(path):
+    t, res = five(path)
+    t.close()
+    with pytest.raises(ValueError, match="closed"):
+        t.scan_from(res[0][1])

@@ -14,7 +14,8 @@ INSERT 0 6
 ----------------------------------------
  Index Scan using users_pkey on users
    Index Cond: ((id >= 2) AND (id < 5))
-(2 rows)
+   Heap Fetch: sequential
+(3 rows)
 
  id | name | age 
 ----+------+-----
@@ -28,8 +29,9 @@ INSERT 0 6
  Limit
    ->  Index Scan using users_pkey on users
          Index Cond: ((id > 1) AND (id <= 6))
+         Heap Fetch: sequential
          Filter: (age > 30)
-(4 rows)
+(5 rows)
 
  name 
 ------
@@ -40,7 +42,8 @@ INSERT 0 6
 ---------------------------------------
  Index Scan using users_pkey on users
    Index Cond: ((id > 5) AND (id < 3))
-(2 rows)
+   Heap Fetch: sequential
+(3 rows)
 
  id | name | age 
 ----+------+-----
@@ -50,7 +53,8 @@ INSERT 0 6
 ---------------------------------------------
  Index Scan using users_pkey on users
    Index Cond: (id > 1180591620717411303424)
-(2 rows)
+   Heap Fetch: sequential
+(3 rows)
 
                QUERY PLAN                
 -----------------------------------------

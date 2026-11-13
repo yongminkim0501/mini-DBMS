@@ -530,6 +530,7 @@ class TableFile:
         next_id = self._next_id
         if not HEADER_SIZE <= offset < end:
             raise ValueError(f"offset {offset} out of range [{HEADER_SIZE}, {end})")
+        # (경계 검사는 아래에서 레코드를 읽으며 함께 한다: 별도 pread 를 피하려고 _check_record_boundary 를 쓰지 않음)
 
         assert self._reader is not None
         fd = self._reader.fileno()
@@ -555,23 +556,59 @@ class TableFile:
             raise DataCorrupted(f"record at offset {offset} has out-of-range id {row[0]}")
         return None if flags & FLAG_DELETED else row
 
-    def records(self) -> Iterator[tuple[int, int, tuple]]:
-        """deleted 를 포함한 모든 레코드를 ``(offset, flags, row)`` 로 순서대로 내보낸다.
+    def _check_record_boundary(self, offset: int, end: int) -> None:
+        """``offset`` 이 ``[16, end)`` 안의 레코드 경계인지 확인한다 (read_at / scan_from 공통 검사).
 
-        제너레이터 생성 시점의 파일 끝까지만 읽는다. 독립된 읽기 핸들을 쓰므로
-        순회 도중 read_at/append 를 호출해도 순회 위치가 깨지지 않는다.
-        레코드마다 두 CRC 를 검증하고 불일치면 DataCorrupted.
+        Raises:
+            ValueError: 정수가 아니거나 범위 밖.
+            DataCorrupted: 레코드 경계가 아님 (header_crc 불일치, 잘못된 length).
+        """
+        if type(offset) is not int:
+            raise ValueError(f"offset must be an int, got {type(offset).__name__}")
+        if not HEADER_SIZE <= offset < end:
+            raise ValueError(f"offset {offset} out of range [{HEADER_SIZE}, {end})")
+        assert self._reader is not None
+        hdr = _pread(self._reader.fileno(), RECORD_HEADER_SIZE, offset)
+        if len(hdr) < RECORD_HEADER_SIZE:
+            raise DataCorrupted(f"offset {offset} is not a valid record boundary")
+        length, _body_crc, header_crc = _REC_HDR.unpack_from(hdr, 0)
+        if _crc32(hdr[:8]) != header_crc:
+            raise DataCorrupted(f"offset {offset} is not a valid record boundary (header checksum mismatch)")
+        if length < self._codec.min_body or offset + RECORD_HEADER_SIZE + length > end:
+            raise DataCorrupted(f"offset {offset} is not a valid record boundary (bad length {length})")
+
+    def _resolve_end(self, end_offset: int | None) -> int:
+        # [LOCK:read] _end 스냅샷 (Phase 3: 공유 락 안에서 기록한 스냅샷을 end_offset 으로 넘긴다).
+        end = self._end
+        if end_offset is None:
+            return end
+        if type(end_offset) is not int:
+            raise ValueError(f"end_offset must be an int, got {type(end_offset).__name__}")
+        if not HEADER_SIZE <= end_offset <= end:
+            raise ValueError(f"end_offset {end_offset} out of range [{HEADER_SIZE}, {end}]")
+        return end_offset
+
+    def records(self, start_offset: int = HEADER_SIZE, end_offset: int | None = None) -> Iterator[tuple[int, int, tuple]]:
+        """deleted 를 포함한 레코드를 ``(offset, flags, row)`` 로 ``[start_offset, end_offset)`` 에서 순서대로 내보낸다.
+
+        ``end_offset`` 을 생략하면 제너레이터 생성 시점의 파일 끝까지만 읽는다. 독립된 읽기 핸들을 쓰므로
+        순회 도중 read_at/append 를 호출해도 순회 위치가 깨지지 않는다. 레코드마다 두 CRC 를 검증하고 불일치면 DataCorrupted.
+        ``start_offset`` 은 레코드 경계여야 하고(read_at 과 같은 오류), 검사는 첫 next() 가 아니라 호출 즉시 한다.
+        ``end_offset`` 이 레코드 중간이면 그 레코드에 닿았을 때 DataCorrupted.
         """
         self._check_open()
-        # [LOCK:read] _end 스냅샷. 이후 순회는 전용 fd 만 쓰고 인스턴스 상태를 건드리지 않는다.
-        end = self._end
-        return self._records_gen(end)
+        end = self._resolve_end(end_offset)
+        if start_offset != end:  # 빈 구간(첫 레코드 위치 == 끝)은 허용
+            self._check_record_boundary(start_offset, end)
+        elif type(start_offset) is not int:
+            raise ValueError(f"offset must be an int, got {type(start_offset).__name__}")
+        return self._records_gen(start_offset, end)
 
-    def _records_gen(self, end: int) -> Iterator[tuple[int, int, tuple]]:
+    def _records_gen(self, start: int, end: int) -> Iterator[tuple[int, int, tuple]]:
         decode = self._codec.decode
         with open(self.path, "rb", buffering=0) as f:
-            last = HEADER_SIZE
-            for kind, offset, buf, p, length, body_ok in _iter_raw(f, HEADER_SIZE, end, self._codec.min_body):
+            last = start
+            for kind, offset, buf, p, length, body_ok in _iter_raw(f, start, end, self._codec.min_body):
                 if kind == _EV_BAD_HEADER:
                     raise DataCorrupted(f"record header checksum mismatch at offset {offset}")
                 if kind == _EV_BAD_LENGTH:
@@ -584,13 +621,28 @@ class TableFile:
             if last != end:
                 raise DataCorrupted(f"incomplete record at offset {last}")
 
-    def scan(self) -> Iterator[tuple[int, tuple]]:
-        """deleted 가 아닌 레코드를 ``(offset, row)`` 로 순서대로 내보내는 제너레이터.
+    def scan_from(self, start_offset: int, end_offset: int | None = None) -> Iterator[tuple[int, tuple]]:
+        """``start_offset`` 의 레코드부터 ``end_offset`` 이전까지 deleted 가 아닌 레코드를 ``(offset, row)`` 로 순서대로.
+
+        - ``start_offset`` 은 레코드 경계여야 한다 (아니면 read_at 과 같은 ValueError / DataCorrupted, 호출 즉시).
+        - ``end_offset`` 을 생략하면 호출 시점의 파일 끝 (그 뒤 append 된 레코드는 보이지 않는다 = 스냅샷).
+        - 전용 읽기 핸들로 1 MiB 청크 단위 순차 읽기. 인스턴스 상태를 바꾸지 않는다 (불변식 (b)).
+        파일 안의 id 는 엄격히 증가하므로 offset 순서 = id 순서다. 범위 Index Scan 이 이 성질로 시작 위치만
+        트리에서 찾고 나머지는 순차로 읽는다 (클러스터드 범위 스캔).
+        """
+        return (
+            (offset, row)
+            for offset, flags, row in self.records(start_offset, end_offset)
+            if not flags & FLAG_DELETED
+        )
+
+    def scan(self, end_offset: int | None = None) -> Iterator[tuple[int, tuple]]:
+        """deleted 가 아닌 모든 레코드를 ``(offset, row)`` 로 순서대로 (``scan_from(첫 레코드 위치, end_offset)``).
 
         파일 전체를 메모리에 올리지 않고 1 MiB 청크 단위로 읽으며 하나씩 검증·디코딩한다.
         닫힌 TableFile 에서 호출하면 (첫 next() 가 아니라) 호출 즉시 ValueError.
         """
-        return ((offset, row) for offset, flags, row in self.records() if not flags & FLAG_DELETED)
+        return self.scan_from(HEADER_SIZE, end_offset)
 
     # ------------------------------------------------------------ properties
     @property

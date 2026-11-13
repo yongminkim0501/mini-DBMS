@@ -377,13 +377,16 @@ def test_file_scanned_once_at_open(tmp_path, monkeypatch):
     with Database(tmp_path) as db:
         h = db.table_handle(db.catalog.get("users"))
         assert len(calls) == 1  # 검증 스캔 한 번에 인덱스까지 구성
+        assert calls[0][0] == storage_mod.HEADER_SIZE
         assert len(h.index) == 2000
-        # 인덱스 검색은 파일 스캔을 하지 않는다
+        # 점 검색은 파일 스캔을 하지 않는다 (read_at 한 번)
         assert ids(db, "SELECT * FROM users WHERE id = 1500") == [1500]
-        assert ids(db, "SELECT * FROM users WHERE id >= 1990") == list(range(1990, 2001))
         assert len(calls) == 1
-        ids(db, "SELECT * FROM users WHERE age = 3")  # Seq Scan 은 당연히 스캔한다
-        assert len(calls) == 2
+        # 범위 검색은 트리에서 찾은 시작 위치부터만 순차로 읽는다 (파일 처음부터가 아님)
+        assert ids(db, "SELECT * FROM users WHERE id >= 1990") == list(range(1990, 2001))
+        assert len(calls) == 2 and calls[1][0] == h.index.search(1990)
+        ids(db, "SELECT * FROM users WHERE age = 3")  # Seq Scan 은 처음부터 스캔한다
+        assert len(calls) == 3 and calls[2][0] == storage_mod.HEADER_SIZE
 
 
 # ------------------------------------------------------------------ 인덱스 무효화와 재구성
@@ -452,11 +455,13 @@ def test_explain_index_scan_shapes(db):
     assert plan_text(db, "SELECT * FROM users WHERE id >= 1000 AND id < 2000") == [
         "Index Scan using users_pkey on users",
         "  Index Cond: ((id >= 1000) AND (id < 2000))",
+        "  Heap Fetch: sequential",
     ]
     assert plan_text(db, "SELECT name FROM users WHERE id < 10 AND age > 3 AND id <> 4 LIMIT 2") == [
         "Limit",
         "  ->  Index Scan using users_pkey on users",
         "        Index Cond: (id < 10)",
+        "        Heap Fetch: sequential",
         "        Filter: ((age > 3) AND (id <> 4))",
     ]
     assert plan_text(db, "SELECT * FROM users WHERE id = '7'") == [
@@ -474,14 +479,16 @@ def test_explain_analyze_index_scan(db):
     assert lines[0].startswith("Index Scan using users_pkey on users  (actual time=")
     # id 11..20 의 age 는 10..19 → age > 15 는 4행 통과, 6행 제거
     assert lines[0].endswith("rows=4 loops=1)")
-    assert lines[1:4] == [
+    assert lines[1:5] == [
         "  Index Cond: ((id > 10) AND (id <= 20))",
+        "  Heap Fetch: sequential",
         "  Filter: (age > 15)",
         "  Rows Removed by Filter: 6",
     ]
-    assert lines[4].startswith("Execution Time: ")
+    assert lines[5].startswith("Execution Time: ")
     lines = plan_text(db, "ANALYZE SELECT * FROM users WHERE id = 3")
     assert lines[0].endswith("rows=1 loops=1)") and lines[1] == "  Index Cond: (id = 3)"
+    assert not any("Heap Fetch" in x for x in lines)  # 점 검색은 read_at 한 번
     assert not any("Rows Removed" in x for x in lines)
 
 
@@ -509,3 +516,44 @@ def test_table_handle_open_standalone(tmp_path):
         assert explain_lines(scan) == ["Index Scan using users_pkey on users"]
     finally:
         h.close()
+
+
+# ------------------------------------------------------------------ 클러스터드 범위 스캔
+
+
+@pytest.mark.parametrize(
+    ("where", "expected"),
+    [
+        ("id >= 10 AND id <= 12", [10, 11, 12]),
+        ("id > 10 AND id <= 12", [11, 12]),
+        ("id >= 10 AND id < 12", [10, 11]),
+        ("id > 10 AND id < 12", [11]),
+        ("id > 10 AND id < 11", []),
+        ("id >= 299", [299, 300]),
+        ("id > 300", []),
+        ("id < 1", []),
+        ("id <= 1", [1]),
+        ("id > 0 AND id < 3", [1, 2]),
+    ],
+)
+def test_range_scan_bounds_without_read_at(db, monkeypatch, where, expected):
+    monkeypatch.setattr(TableFile, "read_at", lambda *a: pytest.fail("range scan must not use read_at"))
+    node = access_path(db, where)
+    assert isinstance(node, IndexScan) and node.point is None
+    assert ids(db, f"SELECT * FROM users WHERE {where}") == expected
+    monkeypatch.undo()
+    assert ids(db, f"SELECT * FROM users WHERE {where}", OFF) == expected
+
+
+def test_range_scan_stops_at_upper_bound(db, monkeypatch):
+    seen = []
+    real = TableFile.scan_from
+
+    def spy(self, start, end=None):
+        for item in real(self, start, end):
+            seen.append(item[1][0])
+            yield item
+
+    monkeypatch.setattr(TableFile, "scan_from", spy)
+    assert ids(db, "SELECT * FROM users WHERE id >= 100 AND id < 105") == [100, 101, 102, 103, 104]
+    assert seen == [100, 101, 102, 103, 104, 105]  # 상한을 넘은 첫 행(105)에서 멈춘다
