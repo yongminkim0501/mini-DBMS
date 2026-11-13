@@ -10,7 +10,7 @@ Krafton Jungle Week 12 DBMS 구현
 |---|---|---|
 | 0 | 저장 계층(TableFile, 포맷 v2: 레코드 CRC + quarantine 복구), 스키마 카탈로그, SQLSTATE 에러 체계 | ✅ |
 | 1 | SQL 처리기: 렉서·파서·AST, 바인더·플래너·실행기·CLI (docs/sql-grammar.md, docs/execution.md) | ✅ |
-| 2 | id 기반 메모리 B+ 트리 인덱스 | |
+| 2 | id 기반 메모리 B+ 트리 인덱스, 인덱스 스캔, SET/SHOW (docs/bptree.md, docs/phase2-report.md) | ✅ |
 | 3 | 스레드 풀 API 서버 (PostgreSQL wire protocol) | |
 
 ## 구조
@@ -23,8 +23,11 @@ minidb/identifiers.py 비인용 식별자 규칙 (ASCII 만 소문자로 접기)
 minidb/tools/dump.py  테이블 파일 덤프
 minidb/sql/           렉서, 문장 분리(스트리밍 포함), AST, 재귀 하강 파서, psql 스타일 에러 출력
 minidb/binder.py      AST + 카탈로그 → 바인딩된 문장 (이름 해석, 타입 변환)
-minidb/planner.py     실행 계획 (choose_access_path: Phase 2 IndexScan 확장 지점)
-minidb/executor.py    계획 노드 (이터레이터 모델), EXPLAIN
+minidb/index/bptree.py 메모리 B+ 트리 (맨 오른쪽 분할 최적화, 벌크 로딩, 불변식 검사)
+minidb/table.py       TableHandle: 데이터 파일 + id 인덱스(<table>_pkey)
+minidb/session.py     세션 설정 (SET/SHOW, enable_indexscan)
+minidb/planner.py     실행 계획 (choose_access_path: id 조건 병합 → Index Scan / Seq Scan)
+minidb/executor.py    계획 노드 (이터레이터 모델: SeqScan, IndexScan, Filter, ...), EXPLAIN
 minidb/engine.py      Database: 외부가 쓰는 단일 진입점
 minidb/result.py      QueryResult, ColumnInfo
 minidb/formatter.py   psql aligned 출력
@@ -32,8 +35,11 @@ minidb/__main__.py    CLI (python -m minidb)
 scripts/bench_storage.py  저장 계층 벤치마크 → results/*.json
 docs/storage-format.md    파일 포맷과 설계 이유
 docs/sql-grammar.md       지원 SQL 문법(BNF), 렉싱 규칙, PostgreSQL 과의 차이
-docs/execution.md         파이프라인, 바인더 타입 규칙, NULL 의미론, 이터레이터 모델, EXPLAIN, 락 지점
+docs/execution.md         파이프라인, 바인더 타입 규칙, NULL 의미론, 이터레이터 모델, 접근 경로, EXPLAIN, 락 지점
+docs/bptree.md            B+ 트리 구조, 분할, 벌크 로딩, 불변식, Phase 3 락 계획
+docs/phase2-report.md     인덱스 벤치마크 결과와 해석, order 선택 근거
 scripts/gen_insert_sql.py 대량 INSERT 스크립트 생성, scripts/bench_e2e.py 종단 벤치마크
+scripts/bench_index.py    인덱스 벤치마크, scripts/demo_phase2.sql 인덱스 시연
 ```
 
 ## 개발 환경
@@ -71,6 +77,9 @@ uv run --python 3.14.6t python -m minidb run script.sql --db ./db --on-error con
 # SQL 문자열 실행
 uv run --python 3.14.6t python -m minidb -c "SELECT * FROM users WHERE age > 20 LIMIT 5" --db ./db
 
+# 인덱스를 쓰지 않고 실행 (SET enable_indexscan = off 로 시작)
+uv run --python 3.14.6t python -m minidb run script.sql --db ./db --no-index
+
 # 테이블 파일 덤프
 uv run --python 3.14.6t python -m minidb dump users --db ./db
 ```
@@ -105,11 +114,42 @@ $ python -m minidb -c "EXPLAIN SELECT name FROM users WHERE age > 30 LIMIT 3" --
 컬럼 목록 없는 INSERT 는 PostgreSQL 처럼 id 를 포함한 모든 컬럼이 대상이다: `INSERT INTO users VALUES (DEFAULT, 'kim', 25)`.
 종료 코드는 성공 0, 문장 오류 1, 사용법/파일 오류 2.
 
+## Phase 2 시연: id 인덱스
+
+테이블을 열 때 데이터 파일을 한 번 훑으며 `id → offset` B+ 트리(`users_pkey`)를 메모리에 만든다. `WHERE id = N` 과
+id 범위 조건은 Index Scan, 다른 컬럼 조건은 Seq Scan 이다. `SET enable_indexscan = off` (또는 `--no-index`)로 비교할 수 있다.
+
+```sh
+# 1) 100만 건 적재 (db/data 는 .gitignore 대상. 이미 행이 있으면 id 가 달라지므로 빈 db 에서)
+uv run --python 3.14.6t python scripts/gen_insert_sql.py --rows 1000000 --batch 5000 --seed 42 --out data/users_1m.sql
+uv run --python 3.14.6t python -m minidb run data/users_1m.sql --db ./db > /dev/null
+
+# 2) 같은 세션에서 인덱스 점 검색 → 인덱스 끔 → 다시 켬 → 범위 검색 → name 조건 Seq Scan
+uv run --python 3.14.6t python -m minidb run scripts/demo_phase2.sql --db ./db --echo
+```
+
+```
+EXPLAIN ANALYZE SELECT * FROM users WHERE id = 777777;
+ Index Scan using users_pkey on users  (actual time=0.026..0.032 rows=1 loops=1)
+   Index Cond: (id = 777777)
+ Execution Time: 0.040 ms
+
+SET enable_indexscan = off;
+EXPLAIN ANALYZE SELECT * FROM users WHERE id = 777777;
+ Seq Scan on users  (actual time=1637.597..2126.556 rows=1 loops=1)
+   Filter: (id = 777777)
+   Rows Removed by Filter: 999999
+ Execution Time: 2126.565 ms
+```
+
+벤치마크 결과(두 빌드)와 해석은 docs/phase2-report.md: `WHERE id = N` 인덱스 켬 0.04 ms / 끔 1.9 초, `WHERE name = …` 1.9 초.
+
 ## 벤치마크
 
 ```sh
 uv run --python 3.14.6t python scripts/gen_insert_sql.py --rows 1000000 --batch 5000 --seed 42 --out data/users_1m.sql
 uv run --python 3.14.6t python scripts/bench_e2e.py --out results/e2e_3.14.6t.json
+uv run --python 3.14.6t python scripts/bench_index.py --out results/index_3.14.6t.json   # --fresh 면 적재부터 다시
 uv run --python 3.14.6t python scripts/bench_storage.py --rows 1000000 --db ./bench_db --seed 42 --out results/storage_3.14t.json
 uv run --python 3.14.6t python scripts/bench_parser.py --out results/parser_3.14t.json
 ```

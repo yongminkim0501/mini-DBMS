@@ -8,7 +8,7 @@ minidb 는 PostgreSQL 문법의 **부분집합**을 지원한다. 오류는 Post
 
 ```
 script         := statement { ';' statement } [ ';' ]          -- 빈 문장(;;)은 무시
-statement      := [ EXPLAIN [ ANALYZE ] ] ( insert | select )
+statement      := [ EXPLAIN [ ANALYZE ] ] ( insert | select ) | set | show
 
 insert         := INSERT INTO qualified_name [ '(' ident { ',' ident } ')' ]
                   VALUES row { ',' row }
@@ -24,7 +24,17 @@ op             := '=' | '<>' | '!=' | '<' | '<=' | '>' | '>='
 
 literal        := [ '-' ] integer | string | NULL
 qualified_name := ident [ '.' ident ]
+
+set            := SET [ SESSION ] var_name ( '=' | TO ) ( var_value | DEFAULT )
+show           := SHOW var_name
+var_name       := ident { '.' ident }
+var_value      := ident | string | [ '-' ] integer        -- on/off/true/false 는 비인용 식별자로 들어온다
 ```
+
+`SET`/`SHOW`/`SESSION` 은 PostgreSQL 처럼 **비예약어**다(문장 맨 앞의 비인용 단어로만 알아보므로 `set` 이라는 컬럼도 쓸 수 있다).
+`TO` 는 PostgreSQL 에서 예약어라 같게 예약어로 추가했다(컬럼 이름으로 쓰려면 `"to"`).
+SET 의 값은 AST 에서 항상 `Literal` 로 저장한다(`off` → `Literal('off')`). 그래서 `to_sql()` 은 `SET enable_indexscan = 'off'`
+처럼 문자열 리터럴로 쓰고, 왕복(`parse(to_sql(ast)) == ast`)도 성립한다. 이름/값 검증은 실행 시 세션이 한다(§4).
 
 `{ x }` 는 0회 이상 반복, `[ x ]` 는 생략 가능이다.
 
@@ -61,7 +71,7 @@ while 루프가 되고, 선택 `[ RETURNING … ]` 은 "다음 토큰이 RETURNI
 | 공백 | 스페이스, 탭, `\r`, `\n` |
 | 줄 주석 | `--` 부터 줄 끝까지 |
 | 블록 주석 | `/* … */`, PostgreSQL 처럼 **중첩 지원**: `/* a /* b */ c */` 전체가 주석. 닫히지 않으면 `unterminated /* comment` |
-| 예약 키워드 | `SELECT FROM WHERE INSERT INTO VALUES RETURNING LIMIT ALL AND NULL DEFAULT EXPLAIN ANALYZE` (대소문자 무시). 비인용으로 식별자 자리에 오면 구문 오류 |
+| 예약 키워드 | `SELECT FROM WHERE INSERT INTO VALUES RETURNING LIMIT ALL AND NULL DEFAULT EXPLAIN ANALYZE TO` (대소문자 무시). 비인용으로 식별자 자리에 오면 구문 오류 |
 | 비인용 식별자 | 첫 글자: ASCII 영문자, `_`, 비 ASCII 문자(U+0080 이상). 이후: 여기에 ASCII 숫자와 `$` 추가. **ASCII A-Z 만** 소문자로 변환 (§2.1) |
 | 인용 식별자 | `"…"`, 대소문자 유지, `""` → `"`. 빈 식별자는 `zero-length delimited identifier`, 닫히지 않으면 `unterminated quoted identifier` |
 | 식별자 길이 | UTF-8 **63바이트** 초과면 `NameTooLong` (42622) |
@@ -139,6 +149,11 @@ StatementSource(text, start_offset, error=None, tokens=None)
 | 비교 `= <> != < <= > >=`, 리터럴이 왼쪽인 조건 | ✅ | |
 | `EXPLAIN [ANALYZE] insert/select` | ✅ | 형식은 docs/execution.md |
 | `EXPLAIN (옵션…)`, `EXPLAIN VERBOSE` | ❌ | 0A000 / 42601 |
+| `SET [SESSION] name { = \| TO } { value \| DEFAULT }`, `SHOW name` | ✅ | 지원 설정은 `enable_indexscan` 하나 |
+| 알 수 없는 설정 이름 | ❌ | 42704 `unrecognized configuration parameter "x"` |
+| 불리언이 아닌 값 (`maybe`, `2`) | ❌ | 22023 `parameter "enable_indexscan" requires a Boolean value` |
+| `SET x = a, b` | ❌ | 22023 `SET x takes only one argument` |
+| `SET LOCAL`, `SHOW ALL`, `RESET` | ❌ | 0A000 |
 | `UPDATE`, `DELETE`, `CREATE`, `DROP`, `ALTER`, `BEGIN`, `COMMIT`, `ROLLBACK`, `WITH` … | ❌ | 0A000 `UPDATE statements are not supported` |
 | `WHERE … OR …` | ❌ | 0A000 `OR in WHERE clause is not supported` |
 | `WHERE NOT …` | ❌ | 0A000 `NOT in WHERE clause is not supported` |
@@ -167,6 +182,10 @@ StatementSource(text, start_offset, error=None, tokens=None)
 | `SELECT 1` (FROM 없음) | 허용 | 구문 오류 | 문법이 FROM 을 요구 |
 | `LIMIT NULL` | LIMIT 없음 | 구문 오류 | 문법이 정수/ALL 만 허용 |
 | `INSERT` 컬럼 수 ≠ 값 수 | 파싱 단계에서 42601 | 바인더가 검사 | 컬럼 목록이 없는 경우는 스키마가 있어야 알 수 있으므로 한곳(바인더)에서 일관되게 검사 |
+| 불리언 설정 값 | `on/off/true/false/yes/no/1/0` 과 고유 접두사 (`t`, `of` …), 대소문자 무시 | 동일 (`parse_bool` 규칙) | |
+| `SET`/`SHOW` 의 42704/22023 오류 위치 | 위치 없음 | 이름/값 위치에 캐럿 | Phase 1 의 "모든 오류에 위치" 원칙을 유지 |
+| `SET my.custom = 'x'` (점이 있는 이름) | 사용자 정의 placeholder 로 허용 | 42704 | 설정 레지스트리에 있는 이름만 허용 |
+| `SET LOCAL` | 트랜잭션 밖이면 WARNING 후 무시 | 0A000 | 트랜잭션이 없다 |
 | 스크립트 중간 문장의 "end of input" | `;` 토큰을 가리킴 | 문장 마지막 토큰 바로 뒤(대개 `;` 위치) | 문장을 먼저 분리하므로 파서는 `;` 를 보지 않는다 |
 
 ## 6. 성능 (100만 행 INSERT 스크립트, M-series 단일 스레드)

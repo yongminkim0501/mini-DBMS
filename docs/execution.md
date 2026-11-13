@@ -112,7 +112,8 @@ TEXT 비교는 **유니코드 코드포인트 순서**다. 파이썬 `str` 비�
 ## 4. 계획 노드와 이터레이터 모델
 
 ```
-Limit(n) ──pull──▶ Project(cols) ──pull──▶ Filter(conds) ──pull──▶ SeqScan(table) ──▶ TableFile.scan()
+Limit(n) ──pull──▶ Project(cols) ──pull──▶ Filter(conds) ──pull──▶ SeqScan(table)   ──▶ TableFile.scan()
+                                                              └──▶ IndexScan(table) ──▶ B+ 트리 search/range → TableFile.read_at()
 ```
 
 각 노드는 `__iter__` 가 제너레이터인 객체다. 상위 노드가 `next()` 로 행을 하나 **당기면**, 그 요청이 아래로 내려가
@@ -121,10 +122,11 @@ SeqScan 이 파일에서 레코드 하나를 디코딩해 올려 보낸다. 행�
 | 노드 | 하는 일 |
 |---|---|
 | `SeqScan` | `TableFile.scan()` 순서대로 행을 내보낸다. `rows_scanned` 로 읽은 행 수를 센다 |
+| `IndexScan` | id 인덱스(`<table>_pkey`)로 찾은 offset 의 행만 `read_at` 으로 읽는다. 점 검색은 `search` 한 번, 범위는 `range` 제너레이터로 리프를 따라간다. `rows_fetched` 로 읽은 행 수를 센다 (Phase 2, docs/bptree.md) |
 | `Filter` | AND 로 연결된 비교를 모두 TRUE 로 만족하는 행만 통과 |
 | `Project` | 출력 컬럼만 골라 낸다 (전체를 순서대로 고르면 그대로 통과) |
 | `Limit` | n 개를 내보내면 **하위를 더 당기지 않고** 끝난다 |
-| `ValuesScan` → `Insert` | 바인딩된 행들을 `append_many` 한 번으로 쓰고, RETURNING 이 있으면 부여된 id 를 포함한 행을 내보낸다 |
+| `ValuesScan` → `Insert` | 바인딩된 행들을 `TableHandle.append_many` 한 번으로 쓰고(파일 → 인덱스 순), RETURNING 이 있으면 부여된 id 를 포함한 행을 내보낸다 |
 
 **LIMIT 이 스캔을 멈추는 원리**: `Limit` 은 n 번째 행을 `yield` 한 다음 `return` 한다. 하위 제너레이터에 다음 행을
 요청하지 않으므로 SeqScan 의 `for` 루프는 다음 레코드를 읽지 않은 채 멈춰 있다. `Limit` 은 끝날 때 하위 이터레이터를
@@ -135,25 +137,31 @@ SeqScan 이 파일에서 레코드 하나를 디코딩해 올려 보낸다. 행�
 `SELECT n` 태그는 행을 다 읽어야 알 수 있으므로, `command_tag` 를 읽으면 남은 행을 소비한 뒤 태그를 만든다. wire protocol
 에서도 CommandComplete 가 DataRow 뒤에 온다. CLI 의 표 출력은 열 폭을 정해야 하므로 psql 처럼 결과를 모두 받은 뒤 출력한다.
 
-## 5. `choose_access_path` 와 Phase 2 확장 지점
+## 5. `choose_access_path` (Phase 2: 인덱스 사용)
 
 SELECT 계획의 모양은 항상 `[Limit] → Project → [Filter] → <접근 경로>` 이다. 접근 경로(테이블에서 행을 꺼내는 방법)는
-`planner.choose_access_path()` **한 곳에서만** 정한다. Phase 1 은 항상 `SeqScan` 을 반환한다.
+`planner.choose_access_path(bound, table_handle, session)` **한 곳에서만** 정한다. 비용 모델은 없고 규칙 기반이다.
 
-Phase 2 는 이 함수에만 분기를 추가한다:
+1. `enable_indexscan = off` (세션 설정, CLI `--no-index`) → `SeqScan`.
+2. WHERE 에 NULL 과의 비교가 있으면 → `SeqScan` (조건 전체가 항상 거짓이라 Filter 가 스캔을 시작하지도 않는다).
+3. id 조건(`=`, `<`, `<=`, `>`, `>=`, 모두 AND)을 `merge_id_conditions` 로 하나의 범위로 합친다.
+   - `id = c` 는 하한 c(포함) + 상한 c(포함). 하한은 가장 큰 값, 상한은 가장 작은 값. 같은 값이면 미포함이 이긴다.
+   - 하한 > 상한, 또는 같은 값인데 한쪽이 미포함 → **모순(empty)**.
+   - BIGINT 범위 밖 상수: `id > 2^70` 은 empty, `id < 2^70` 은 "상한 없음" (`id < -2^70` 은 empty, `id > -2^70` 은 "하한 없음").
+4. 결과에 따라
+   - id 조건 없음 / `<>` 뿐 / 양쪽 다 무한 (`id < 2^70` 만) → `SeqScan` (인덱스로 전체를 훑는 것은 순차 스캔보다 느리다)
+   - 점 (`lo == hi`, 둘 다 포함) → 점 검색 `IndexScan`
+   - empty → `IndexScan(empty=True)`: 실행 시 트리도 파일도 건드리지 않는다 (PostgreSQL 도 모순 조건의 btree 스캔을 실행 시 바로 끝낸다)
+   - 그 외 → 범위 `IndexScan`
 
-```python
-for cond in bound.where:
-    if cond.column_name == "id" and cond.op == "=" and cond.value is not None:
-        return IndexScan(btree, key=cond.value, table_file=tables(bound.table))
-return SeqScan(...)
-```
+**Filter 는 그대로 남아 모든 조건(id 조건 포함)을 다시 검사한다.** 그래서 접근 경로가 무엇이든 결과는 같고
+(인덱스 켬/끔 차등 테스트로 검증), 플래너의 범위 계산이 조금 넓게 잡혀도 결과는 틀리지 않는다. 다만 범위를
+**좁게** 잘못 잡으면 행이 빠지므로, 차등 테스트가 바로 그 종류의 버그(경계 포함 여부, off-by-one, 범위 밖 상수)를 잡는다.
 
-- 파서가 `42 = id` 를 `id = 42` 로 정규화하므로 한 가지 모양만 확인하면 된다.
-- IndexScan 은 B+ 트리에서 id → offset 을 찾아 `TableFile.read_at(offset)` 으로 행을 내보낸다.
-- 위의 Filter 는 그대로 남아 모든 조건(id 조건 포함)을 다시 검사한다. 그래서 접근 경로가 바뀌어도 결과는 같고,
-  Filter/Project/Limit/엔진은 바꿀 필요가 없다.
-- `bench_e2e.py` 의 `id_eq` 측정값(전체 스캔)이 Phase 2 인덱스와 비교할 기준값이다.
+**Seq Scan 의 조기 종료를 하지 않는 이유**: 파일 안의 id 는 append 순서대로 증가하므로, `id = 42` 를 찾는 Seq Scan 도
+42 를 지나면 멈출 수 있다. 그래도 평균적으로 파일의 절반을 읽어야 하므로 여전히 O(n) 이고(id 가 클수록 느리다),
+"id 가 정렬되어 있다"는 저장 계층의 성질에 기대게 되어 Seq Scan 의 의미(모든 행을 본다)가 흐려진다. 인덱스와 비교할
+기준값이 "순수 전체 스캔"이어야 차이를 해석하기 쉽다는 점도 있어 Phase 1 과 동일한 순수 전체 스캔으로 두었다.
 
 ## 6. EXPLAIN 형식
 
@@ -175,6 +183,14 @@ EXPLAIN SELECT name FROM users WHERE age > 30 AND name = 'kim' LIMIT 3;
 - 상수 표시: 정수 리터럴은 그대로, 문자열 리터럴은 변환된 타입을 붙인다(`'25'::bigint`, `'kim'::text`), NULL 은
   `NULL::bigint`. 조건은 정규화된 형태로 보인다(`5 < age` → `(age > 5)`).
 - INSERT: `Insert on users` 아래에 한 행이면 `Result`, 여러 행이면 `Values Scan on "*VALUES*"`.
+- 인덱스 (PostgreSQL 과 같은 모양): 인덱스에 쓴 조건은 `Index Cond:`, 나머지만 `Filter:`.
+  `Index Cond:` 에는 병합 전의 원래 조건을 원문 순서대로 보여준다.
+
+```
+ Index Scan using users_pkey on users
+   Index Cond: ((id >= 1000) AND (id < 2000))
+   Filter: (age > 30)
+```
 
 **EXPLAIN ANALYZE** 는 실제로 실행한다. **INSERT 도 실제로 삽입된다**(PostgreSQL 과 동일). 결과 행은 클라이언트에 반환하지 않는다.
 
@@ -198,13 +214,15 @@ EXPLAIN SELECT name FROM users WHERE age > 30 AND name = 'kim' LIMIT 3;
 | `INSERT … RETURNING` | RETURNING 컬럼 | `INSERT 0 <행수>` |
 | `SELECT …` | 선택 컬럼 | `SELECT <행수>` |
 | `EXPLAIN …` | `QUERY PLAN` (text) | `EXPLAIN` |
+| `SET …` | None | `SET` |
+| `SHOW name` | `name` (text), 한 행 | `SHOW` |
 
 `ColumnInfo(name, type_name, type_oid)`: bigint 는 OID 20, text 는 OID 25. Phase 3 의 RowDescription 에 그대로 쓴다.
 
 ## 8. CLI
 
 ```
-python -m minidb run <file.sql | -> --db <dir> [--on-error stop|continue] [--echo] [--timing] [--fsync]
+python -m minidb run <file.sql | -> --db <dir> [--on-error stop|continue] [--echo] [--timing] [--fsync] [--no-index]
 python -m minidb -c "<SQL>" --db <dir> [같은 옵션]
 python -m minidb dump <table> --db <dir>
 ```
@@ -216,16 +234,20 @@ python -m minidb dump <table> --db <dir>
   SELECT/EXPLAIN 의 태그는 psql 처럼 출력하지 않는다.
 - `--timing` 은 오류가 난 문장도 시간을 출력한다(psql 과 같음).
 - 종료 코드: 모두 성공 0, 문장 오류가 하나라도 있으면 1, 사용법/파일/카탈로그 오류 2.
+- 실행 하나가 세션 하나다. `--no-index` 는 시작 시 `SET enable_indexscan = off` 와 같고, 스크립트 안의 `SET` 으로 바꿀 수 있다.
 
 ## 9. Phase 3 락 지점
 
-이번 단계의 `Database`·`TableFile` 은 스레드 안전하지 않다. 락이 필요한 지점은 코드에 `# [LOCK]` 주석으로 표시했다.
+이번 단계의 `Database`·`TableHandle`·`TableFile`·`BPlusTree` 는 스레드 안전하지 않다. 락이 필요한 지점은 코드에 `# [LOCK]` 주석으로 표시했다.
 
 | 지점 | 위치 | 락 | 이유 |
 |---|---|---|---|
-| TableFile 캐시 조회·생성 | `Database.table_file` | 엔진 락 (짧게) | 같은 테이블에 TableFile 이 두 개 생기면 각자 next_id 를 들고 append 해 id 가 겹친다 |
+| 테이블 핸들 캐시 조회·생성 | `Database.table_handle` | 엔진 락 (짧게) | 같은 테이블에 핸들이 두 개 생기면 각자 next_id·인덱스를 들고 append 해 id 가 겹친다 |
 | 카탈로그 reload | `Database.reload_catalog` | 엔진 배타 락 | 반쯤 갱신된 사전을 읽으면 안 된다. 실행 중인 문장이 없을 때만 |
-| INSERT 실행 | `Insert._rows` → `TableFile.append_many` | 테이블 배타(write) 락 | id 할당 → 쓰기 → `_end`/`_next_id` 갱신이 한 임계 구역 |
+| INSERT 실행 | `Insert._rows` → `TableHandle.append_many` | 테이블 배타(write) 락 | id 할당 → 쓰기 → `_end`/`_next_id` 갱신 → **인덱스 insert** 가 한 임계 구역 (파일엔 있고 인덱스엔 없는 순간을 남이 보면 안 된다) |
+| IndexScan | `IndexScan._rows` → `BPlusTree.search/range` + `read_at` | 테이블 공유(read) 락, **range 순회가 끝날 때까지** | 순회 중 분할이 일어나면 리프 연결이 바뀐다 |
+| 인덱스 무효화·재구성 | `TableHandle.invalidate_index` / `_rebuild` | 테이블 배타 락 | 파일 핸들과 인덱스를 함께 교체 |
+| 세션 | `Session` | 없음 | 연결마다 하나, 스레드 사이에 공유하지 않는다 |
 | SELECT 실행 시작 | `Database._select` → `TableFile.scan` 생성 | 테이블 공유(read) 락 | `_end` 스냅샷만 읽는다. 순회는 전용 fd 라 락 밖에서 진행 가능 (storage 불변식 (b)) |
 | `Database.flush` / `close` | 엔진 | 테이블 배타 락 | 쓰기 핸들 사용 |
 
