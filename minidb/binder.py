@@ -33,10 +33,31 @@ from .errors import (
     UndefinedTable,
 )
 from .result import ColumnInfo
-from .sql.ast import Condition, Default, ExplainStmt, InsertStmt, Literal, QualifiedName, SelectStmt, Star, Statement
+from .sql.ast import (
+    Condition,
+    Default,
+    ExplainStmt,
+    InsertStmt,
+    Literal,
+    QualifiedName,
+    SelectStmt,
+    SetStmt,
+    ShowStmt,
+    Star,
+    Statement,
+)
 from .storage import BIGINT_MAX, BIGINT_MIN
 
-__all__ = ["BoundCondition", "BoundInsert", "BoundSelect", "BoundExplain", "BoundStatement", "bind"]
+__all__ = [
+    "BoundCondition",
+    "BoundInsert",
+    "BoundSelect",
+    "BoundExplain",
+    "BoundSet",
+    "BoundShow",
+    "BoundStatement",
+    "bind",
+]
 
 # PostgreSQL int8in 이 허용하는 형식: 앞뒤 공백(isspace), 부호, ASCII 숫자.
 # (int() 는 '1_000', 전각 숫자 '１２' 등도 받아들이므로 직접 검사한다.)
@@ -110,7 +131,28 @@ class BoundExplain:
     analyze: bool
 
 
-type BoundStatement = BoundInsert | BoundSelect | BoundExplain
+@dataclass(frozen=True, slots=True)
+class BoundSet:
+    """``SET name = value``. 이름/값 검증은 실행 시 세션이 한다 (설정은 카탈로그가 아니라 세션의 것이므로).
+
+    ``value`` 가 None 이면 ``SET name TO DEFAULT``.
+    """
+
+    name: str
+    value: int | str | None
+    name_position: int
+    value_position: int
+
+
+@dataclass(frozen=True, slots=True)
+class BoundShow:
+    """``SHOW name``."""
+
+    name: str
+    name_position: int
+
+
+type BoundStatement = BoundInsert | BoundSelect | BoundExplain | BoundSet | BoundShow
 
 
 # ------------------------------------------------------------------ 진입점
@@ -126,6 +168,13 @@ def bind(stmt: Statement, catalog: Catalog) -> BoundStatement:
     """
     if isinstance(stmt, ExplainStmt):
         return BoundExplain(_bind_plain(stmt.statement, catalog), stmt.analyze)
+    if isinstance(stmt, SetStmt):
+        v = stmt.value
+        if isinstance(v, Default):
+            return BoundSet(stmt.name, None, stmt.name_position, v.position)
+        return BoundSet(stmt.name, v.value, stmt.name_position, v.position)
+    if isinstance(stmt, ShowStmt):
+        return BoundShow(stmt.name, stmt.name_position)
     return _bind_plain(stmt, catalog)
 
 

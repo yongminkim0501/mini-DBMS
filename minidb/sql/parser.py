@@ -22,10 +22,23 @@ from collections.abc import Sequence
 from ..errors import (
     DatabaseError,
     FeatureNotSupported,
+    InvalidParameterValue,
     InvalidRowCountInLimitClause,
     SqlSyntaxError,
 )
-from .ast import Condition, Default, ExplainStmt, InsertStmt, Literal, QualifiedName, SelectStmt, Star, Statement
+from .ast import (
+    Condition,
+    Default,
+    ExplainStmt,
+    InsertStmt,
+    Literal,
+    QualifiedName,
+    SelectStmt,
+    SetStmt,
+    ShowStmt,
+    Star,
+    Statement,
+)
 from .lexer import StatementSource, iter_statements, tokenize
 from .tokens import Token, TokenType
 
@@ -38,7 +51,7 @@ _UNSUPPORTED_STATEMENTS: frozenset[str] = frozenset(
     {
         "update", "delete", "create", "drop", "alter", "truncate", "begin", "commit", "rollback",
         "start", "end", "savepoint", "release", "abort", "with", "copy", "grant", "revoke",
-        "set", "show", "reset", "vacuum", "prepare", "execute", "deallocate", "lock",
+        "reset", "vacuum", "prepare", "execute", "deallocate", "lock",
         "merge", "table", "do", "call", "listen", "notify", "discard", "comment", "cluster", "reindex",
     }
 )  # fmt: skip
@@ -169,9 +182,64 @@ class _Parser:
             return self._insert()
         if self._is_keyword(tok, "SELECT"):
             return self._select()
+        # SET / SHOW 는 PostgreSQL 에서도 비예약어다: 문장 맨 앞의 비인용 단어로만 알아본다.
+        if self._is_word(tok, {"set"}):
+            return self._set()
+        if self._is_word(tok, {"show"}):
+            return self._show()
         if self._is_word(tok, _UNSUPPORTED_STATEMENTS):
             raise self._unsupported(f"{tok.value.upper()} statements are not supported", tok)
         raise self._error(tok)
+
+    def _set(self) -> SetStmt:
+        """set := SET [ SESSION ] var_name ( '=' | TO ) ( var_value | DEFAULT )
+        var_value := ident | string | [ '-' ] integer      (on/off/true/false 는 비인용 식별자)"""
+        start = self._advance()
+        tok = self._peek()
+        if self._is_word(tok, {"local"}) and self._peek(1).type is T.IDENT:
+            raise self._unsupported("SET LOCAL is not supported", tok)
+        if self._is_word(tok, {"session"}) and self._peek(1).type is T.IDENT:
+            self._advance()  # SET SESSION x = ... 는 SET x = ... 와 같다
+        name, name_tok = self._var_name()
+        sep = self._peek()
+        if sep.type is T.EQ or self._is_keyword(sep, "TO"):
+            self._advance()
+        else:
+            raise self._error(sep)
+        vtok = self._peek()
+        value: Literal | Default
+        if self._is_keyword(vtok, "DEFAULT"):
+            self._advance()
+            value = Default(position=self._pos(vtok))
+        elif vtok.type is T.IDENT:
+            self._advance()
+            value = Literal(vtok.value, position=self._pos(vtok))
+        elif vtok.type in (T.STRING, T.INTEGER, T.MINUS):
+            value = self._literal()
+        else:
+            raise self._error(vtok)
+        if self._peek().type is T.COMMA:
+            # PostgreSQL 과 같은 메시지와 코드 (22023). 리스트 값을 받는 설정이 없다.
+            raise InvalidParameterValue(f"SET {name} takes only one argument", position=self._pos(self._peek()))
+        return SetStmt(name, value, position=self._pos(start), name_position=self._pos(name_tok))
+
+    def _show(self) -> ShowStmt:
+        """show := SHOW var_name"""
+        start = self._advance()
+        tok = self._peek()
+        if self._is_keyword(tok, "ALL"):
+            raise self._unsupported("SHOW ALL is not supported", tok)
+        name, name_tok = self._var_name()
+        return ShowStmt(name, position=self._pos(start), name_position=self._pos(name_tok))
+
+    def _var_name(self) -> tuple[str, Token]:
+        """var_name := ident { '.' ident }"""
+        first = self._ident()
+        parts = [first.value]
+        while self._peek().type is T.DOT:
+            self._advance()
+            parts.append(self._ident().value)
+        return ".".join(parts), first
 
     def _insert(self) -> InsertStmt:
         """insert := INSERT INTO qualified_name [ '(' ident {',' ident} ')' ]
