@@ -16,7 +16,10 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["minidb", "minidb.tools"]
+packages = ["minidb", "minidb.tools", "minidb.sql", "minidb.index", "minidb.server"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "stress: 동시성 스트레스 테스트 (기본 크기로 CI 에서도 실행, --stress-scale N 으로 확대)",
+]
