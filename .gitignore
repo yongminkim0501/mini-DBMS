@@ -12,3 +12,5 @@ db/data/
 data/
 bench_e2e_db/
 bench_index_db/
+bench_server_db/
+results/server_bench.log
