@@ -30,6 +30,8 @@ __all__ = [
     "GeneratedAlways",
     "UndefinedFunction",
     "InvalidTextRepresentation",
+    "UniqueViolation",
+    "UndefinedObject",
 ]
 
 
@@ -187,3 +189,15 @@ class InvalidTextRepresentation(DatabaseError):
     """문자열을 해당 타입으로 해석할 수 없음 (22P02)."""
 
     default_sqlstate = "22P02"
+
+
+class UniqueViolation(DatabaseError):
+    """유일 제약 위반 (23505). 예: ``duplicate key value violates unique constraint "users_pkey"``."""
+
+    default_sqlstate = "23505"
+
+
+class UndefinedObject(DatabaseError):
+    """존재하지 않는 객체 (42704). 예: ``unrecognized configuration parameter "x"``."""
+
+    default_sqlstate = "42704"
