@@ -36,7 +36,7 @@
 **점 검색** `search(k)`: 루트에서 `children[bisect_right(keys, k)]` 로 리프까지 내려간 뒤(높이만큼), 리프에서
 `bisect_left` 로 k 를 찾는다. O(log n). 100만 건, order 128 이면 높이 3 → bisect 3번.
 
-**범위 검색** `range(lo, hi, lo_inclusive, hi_inclusive)`: 시작 리프를 루트에서 **한 번만** 찾고(`lo` 가 None 이면
+**범위 검색** `range(lo, hi, lo_inclusive, hi_inclusive)` (트리 API): 시작 리프를 루트에서 **한 번만** 찾고(`lo` 가 None 이면
 가장 왼쪽 리프), 그 뒤로는 `next` 를 따라 옆으로 걷는다. 각 리프에서 끝 위치를 `bisect` 로 구해 상한을 넘으면 멈춘다.
 지연 제너레이터라서 소비자가 그만 당기면(LIMIT) 더 이상 리프를 읽지 않는다. 비용은 O(log n + 결과 수).
 
@@ -44,6 +44,36 @@
 |---|---|---|
 | `lo_inclusive=True` / `False` | `bisect_left(keys, lo)` / `bisect_right(keys, lo)` | |
 | `hi_inclusive=True` / `False` | | `bisect_right(keys, hi)` / `bisect_left(keys, hi)` |
+
+### 2.1 범위 검색의 레코드 읽기: 클러스터드 범위 스캔 (`Heap Fetch: sequential`)
+
+SQL 의 범위 Index Scan 은 트리의 `range` 로 모든 (id, offset) 을 받아 행마다 `read_at`(pread 1번 = 랜덤 읽기)을 하지 않는다.
+**하한 이상인 첫 키의 offset 하나만** 트리에서 찾고, 그 위치부터 `TableFile.scan_from(start)` 으로 데이터 파일을
+**순차로** 읽다가 id 가 상한을 넘으면 멈춘다.
+
+```
+트리:  range(lo=500000) → 첫 (500000, offset) 하나만 사용
+파일:  ... [499999] [500000][500001][500002] ... [500999][501000] ...
+                    ▲ scan_from(offset): 1 MiB 청크 순차 읽기 ──────────▶ id ≥ 501000 이면 중단
+```
+
+**올바른 이유**: 데이터 파일 안의 id 는 엄격히 증가한다. 열 때 복구 판정 6("id 가 이전 레코드보다 크지 않으면 손상")이
+기존 파일을, `append_many` 의 순차 id 할당이 새 레코드를 보장한다. 따라서 offset 순서 = id 순서이고, 시작 offset 이후의
+레코드는 id 오름차순으로 이어진다. 삭제 플래그 레코드는 `scan_from` 이 건너뛴다(인덱스에도 없다).
+
+**왜 필요한가**: 행마다 `read_at` 을 하면 행당 약 3.2 µs 로 Seq Scan(행당 약 1.9 µs, 1 MiB 순차 읽기)보다 비싸서,
+범위가 전체의 약 60% 를 넘으면 인덱스가 오히려 느려진다(이전 측정). 순차 읽기로 바꾸면 범위 스캔의 행당 비용이 Seq Scan 과
+같아지고 읽는 행 수는 범위만큼이므로, 어떤 범위에서도 Seq Scan 보다 느려지지 않는다(docs/phase2-report.md §1).
+점 검색(`id = c`)은 레코드 하나라 지금처럼 `read_at` 한 번이다.
+
+**PostgreSQL / MySQL 과의 관계**: PostgreSQL 의 테이블(heap)은 삽입 순서와 무관한 위치에 행이 놓일 수 있어(UPDATE, 빈 공간
+재사용) Index Scan 은 인덱스 순서대로 heap 튜플을 하나씩 찾아간다(이번에 바꾸기 전의 minidb 방식). 그래서 큰 범위에서는
+Bitmap Heap Scan(블록 순으로 정렬해 읽기)이나 Seq Scan 을 비용 모델로 고른다. PostgreSQL 에는 이런 "시작 위치만 찾고 heap 을
+순차로" 경로가 없다(`CLUSTER` 명령은 한 번 정렬할 뿐 이후 삽입 순서를 유지하지 않는다).
+MySQL InnoDB 는 테이블 자체가 기본 키 순서로 정렬된 **클러스터드 인덱스**라서 기본 키 범위 검색은 리프 페이지를 순서대로 읽는다.
+minidb 는 append-only + 자동 증가 id 라는 성질 덕분에 데이터 파일이 **원래부터 id 순으로 정렬**되어 있어, 별도 정렬 없이
+InnoDB 와 비슷한 효과를 얻는다. EXPLAIN 은 이 차이를 `Heap Fetch: sequential` 줄로 표시한다(점 검색에는 없다).
+UPDATE/DELETE 로 행이 다른 위치에 다시 쓰이게 되면 이 성질이 깨지므로, 그때는 이 경로를 쓸 수 없다(이번 범위 밖).
 
 ## 3. 삽입과 분할
 

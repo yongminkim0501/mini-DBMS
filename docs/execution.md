@@ -113,7 +113,7 @@ TEXT 비교는 **유니코드 코드포인트 순서**다. 파이썬 `str` 비�
 
 ```
 Limit(n) ──pull──▶ Project(cols) ──pull──▶ Filter(conds) ──pull──▶ SeqScan(table)   ──▶ TableFile.scan()
-                                                              └──▶ IndexScan(table) ──▶ B+ 트리 search/range → TableFile.read_at()
+                                                              └──▶ IndexScan(table) ──▶ 점: B+ 트리 search → read_at / 범위: 시작 offset → TableFile.scan_from()
 ```
 
 각 노드는 `__iter__` 가 제너레이터인 객체다. 상위 노드가 `next()` 로 행을 하나 **당기면**, 그 요청이 아래로 내려가
@@ -122,7 +122,7 @@ SeqScan 이 파일에서 레코드 하나를 디코딩해 올려 보낸다. 행�
 | 노드 | 하는 일 |
 |---|---|
 | `SeqScan` | `TableFile.scan()` 순서대로 행을 내보낸다. `rows_scanned` 로 읽은 행 수를 센다 |
-| `IndexScan` | id 인덱스(`<table>_pkey`)로 찾은 offset 의 행만 `read_at` 으로 읽는다. 점 검색은 `search` 한 번, 범위는 `range` 제너레이터로 리프를 따라간다. `rows_fetched` 로 읽은 행 수를 센다 (Phase 2, docs/bptree.md) |
+| `IndexScan` | id 인덱스(`<table>_pkey`) 사용. 점 검색은 `search` 한 번 + `read_at` 한 번. 범위는 하한 이상인 첫 키의 offset 만 트리에서 찾고 `scan_from` 으로 파일을 순차로 읽다가 상한에서 멈춘다(클러스터드 범위 스캔, EXPLAIN 의 `Heap Fetch: sequential`). `rows_fetched` 로 읽은 행 수를 센다 (Phase 2, docs/bptree.md) |
 | `Filter` | AND 로 연결된 비교를 모두 TRUE 로 만족하는 행만 통과 |
 | `Project` | 출력 컬럼만 골라 낸다 (전체를 순서대로 고르면 그대로 통과) |
 | `Limit` | n 개를 내보내면 **하위를 더 당기지 않고** 끝난다 |
@@ -184,11 +184,13 @@ EXPLAIN SELECT name FROM users WHERE age > 30 AND name = 'kim' LIMIT 3;
   `NULL::bigint`. 조건은 정규화된 형태로 보인다(`5 < age` → `(age > 5)`).
 - INSERT: `Insert on users` 아래에 한 행이면 `Result`, 여러 행이면 `Values Scan on "*VALUES*"`.
 - 인덱스 (PostgreSQL 과 같은 모양): 인덱스에 쓴 조건은 `Index Cond:`, 나머지만 `Filter:`.
-  `Index Cond:` 에는 병합 전의 원래 조건을 원문 순서대로 보여준다.
+  `Index Cond:` 에는 병합 전의 원래 조건을 원문 순서대로 보여준다. 범위 Index Scan 에는 `Heap Fetch: sequential` 줄이 붙는다
+  (시작 위치부터 파일을 순차로 읽는다, docs/bptree.md §2.1). PostgreSQL 에는 없는 줄이다.
 
 ```
  Index Scan using users_pkey on users
    Index Cond: ((id >= 1000) AND (id < 2000))
+   Heap Fetch: sequential
    Filter: (age > 30)
 ```
 
