@@ -1,8 +1,11 @@
-"""서버 조립: Database + WorkerPool + Dispatcher + Api, 시작과 정상 종료.
+"""서버 조립: Database + WorkerPool + Dispatcher + Api (HTTP) / PgService (PostgreSQL wire protocol), 시작과 정상 종료.
+
+HTTP 와 PG 리스너는 하나만 또는 둘 다 켤 수 있고, 켜면 같은 엔진·워커 풀·디스패처를 함께 쓴다.
 
 정상 종료 순서 (SIGINT/SIGTERM 또는 :meth:`Server.shutdown`):
 
-1. dispatcher 정지: 새 연결 수락 중단, 리스닝 소켓 닫기, 유휴 keep-alive 연결 닫기.
+1. dispatcher 정지: 새 연결 수락 중단, 리스닝 소켓 닫기, 유휴 keep-alive 연결 닫기
+   (유휴 PG 연결에는 FATAL 57P01 ``terminating connection due to administrator command`` 를 보낸 뒤 닫는다).
 2. 워커 풀 graceful shutdown: 큐에 있는 요청과 처리 중인 요청을 끝까지 처리 (응답은 ``Connection: close``).
 3. 모든 테이블 ``flush(durable=True)`` (fsync) 후 닫기.
 
@@ -26,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from ..engine import Database
+from ..pgwire.service import PgService
 from .api import DEFAULT_MAX_RESULT_ROWS, Api, SessionStore
 from .dispatcher import Dispatcher
 from .http import MAX_BODY_BYTES, MAX_HEADER_BYTES
@@ -37,7 +41,12 @@ __all__ = ["ServerConfig", "Server", "runtime_info"]
 @dataclass(slots=True)
 class ServerConfig:
     host: str = "127.0.0.1"  # 인증이 없으므로 기본은 로컬만 (docs/server.md 보안상 한계)
-    port: int = 8080
+    port: int | None = 8080  # HTTP. None 이면 HTTP 리스너 없음
+    pg_port: int | None = None  # PostgreSQL wire protocol. None 이면 없음 (CLI 기본은 5433)
+    pg_database: str = "minidb"  # PG 접속에서 허용하는 데이터베이스 이름
+    pg_idle_timeout: float | None = None  # 시작 이후 유휴 PG 연결 제한 (None: 없음, PostgreSQL 기본과 같다)
+    pg_startup_timeout: float = 60.0  # 시작 패킷 수신 제한 (PostgreSQL authentication_timeout)
+    pg_send_timeout: float = 60.0
     workers: int = 4
     queue_size: int = 64
     max_connections: int = 256
@@ -105,8 +114,33 @@ class Server:
             stats_provider=self.stats,
             log=self.log,
         )
-        self.listener = socket.create_server((cfg.host, cfg.port), backlog=cfg.backlog, reuse_port=False)
-        self.address: tuple[str, int] = self.listener.getsockname()[:2]
+        if cfg.port is None and cfg.pg_port is None:
+            raise ValueError("at least one of port (HTTP) and pg_port must be set")
+        self.listener: socket.socket | None = None
+        self.address: tuple[str, int] | None = None
+        if cfg.port is not None:
+            self.listener = socket.create_server((cfg.host, cfg.port), backlog=cfg.backlog, reuse_port=False)
+            self.address = self.listener.getsockname()[:2]
+        self.pg: PgService | None = None
+        self.pg_listener: socket.socket | None = None
+        self.pg_address: tuple[str, int] | None = None
+        if cfg.pg_port is not None:
+            try:
+                self.pg_listener = socket.create_server((cfg.host, cfg.pg_port), backlog=cfg.backlog, reuse_port=False)
+            except OSError:
+                if self.listener is not None:
+                    self.listener.close()
+                raise
+            self.pg_address = self.pg_listener.getsockname()[:2]
+            self.pg = PgService(
+                self.db,
+                database_name=cfg.pg_database,
+                log=self.log,
+                access_log=cfg.access_log,
+                startup_timeout=cfg.pg_startup_timeout,
+                idle_timeout=cfg.pg_idle_timeout,
+                send_timeout=cfg.pg_send_timeout,
+            )
         self.dispatcher = Dispatcher(
             self.listener,
             self.pool,
@@ -119,6 +153,9 @@ class Server:
             access_log=self.log if cfg.access_log else None,
             log=self.log,
         )
+        if self.pg is not None:
+            assert self.pg_listener is not None
+            self.dispatcher.add_listener(self.pg_listener, self.pg)
         self.started_at = time.monotonic()
         self._thread: threading.Thread | None = None
         self._shutdown_lock = threading.Lock()
@@ -127,6 +164,9 @@ class Server:
 
     @property
     def url(self) -> str:
+        """HTTP 주소 (HTTP 리스너가 없으면 ValueError)."""
+        if self.address is None:
+            raise ValueError("HTTP listener is not enabled")
         host, port = self.address
         return f"http://{host}:{port}"
 
@@ -146,6 +186,7 @@ class Server:
             "pool": self.pool.metrics(),
             "connections": self.dispatcher.stats(),
             "sessions": self.sessions.stats(),
+            "pg": self.pg.stats() if self.pg is not None else None,
             "config": cfg,
         }
 
