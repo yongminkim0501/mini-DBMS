@@ -14,15 +14,16 @@ insert         := INSERT INTO qualified_name [ '(' ident { ',' ident } ')' ]
                   VALUES row { ',' row }
                   [ RETURNING ( '*' | ident { ',' ident } ) ]
 row            := '(' value { ',' value } ')'
-value          := literal | DEFAULT
+value          := literal | param | DEFAULT
 
 select         := SELECT ( '*' | ident { ',' ident } ) FROM qualified_name
                   [ WHERE cond { AND cond } ]
-                  [ LIMIT ( integer | ALL ) ]
-cond           := ident op literal | literal op ident
+                  [ LIMIT ( integer | param | ALL ) ]
+cond           := ident op ( literal | param ) | ( literal | param ) op ident
 op             := '=' | '<>' | '!=' | '<' | '<=' | '>' | '>='
 
 literal        := [ '-' ] integer | string | NULL
+param          := '$' n                                        -- n 은 1~65535, 앞자리 0 없음 ($0, $01 은 구문 오류)
 qualified_name := ident [ '.' ident ]
 
 set            := SET [ SESSION ] var_name ( '=' | TO ) ( var_value | DEFAULT )
@@ -37,6 +38,9 @@ SET 의 값은 AST 에서 항상 `Literal` 로 저장한다(`off` → `Literal('
 처럼 문자열 리터럴로 쓰고, 왕복(`parse(to_sql(ast)) == ast`)도 성립한다. 이름/값 검증은 실행 시 세션이 한다(§4).
 
 `{ x }` 는 0회 이상 반복, `[ x ]` 는 생략 가능이다.
+
+`param` (`$1`, `$2` …)은 PostgreSQL 확장 쿼리 프로토콜의 준비된 문장에서만 값을 받는다. 단순 쿼리와 CLI 에서 쓰면
+`42P02 there is no parameter $1`. 타입 추론과 값 채우기는 docs/pg-protocol.md §3.
 
 ### 파서의 구조 (재귀 하강)
 
